@@ -1,25 +1,14 @@
-
-// #pragma once
-// #include <cstdint>
-
-// uint64_t modexp(uint64_t base, uint64_t exp, uint64_t mod);
-// uint64_t egcd(uint64_t a, uint64_t b, int64_t &x, int64_t &y);
-// int64_t modInverse(int64_t a, int64_t m);
-
 #pragma once
 #include <cstdint>
 
-// This is your existing function (same as modPow)
+/// Modular exponentiation: (base^exp) % mod
 uint64_t modexp(uint64_t base, uint64_t exp, uint64_t mod); 
 
-// These are your other existing functions
+/// Extended GCD: returns gcd and sets x,y so that a*x + b*y = gcd
 uint64_t egcd(uint64_t a, uint64_t b, int64_t &x, int64_t &y);
+
+/// Modular inverse of a mod m (returns -1 if inverse doesn't exist)
 int64_t modInverse(int64_t a, int64_t m);
 
-/**
- * @brief Calculates (a * b) % mod safely without overflowing 64-bit.
- * --- THIS IS THE NEW LINE YOU NEED TO ADD ---
- */
-
- //optional
+/// Safe modular multiplication: (a * b) % mod without overflow
 uint64_t modMul(uint64_t a, uint64_t b, uint64_t mod);
