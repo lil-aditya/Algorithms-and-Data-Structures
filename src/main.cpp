@@ -19,10 +19,11 @@
 
 // --- Our Project Headers ---
 #include "Node.hpp"            // The new "Brain" class
-#include "graph_routing.hpp" // The global network map
-#include "hashmap.hpp"       // The global address book
-#include "logger.hpp"        // Your logger
-#include "rsa_signature.hpp" // For generateKeys()
+#include "graph_routing.hpp"   // The global network map
+#include "hashmap.hpp"         // The global address book
+#include "packet_store.hpp"    // Packet lifecycle tracker
+#include "logger.hpp"          // Your logger
+#include "rsa_signature.hpp"   // For generateKeys()
 
 // --- DEFINE THE GLOBAL LOGGER MACRO ---
 #define PRINT(x) logger.Log(x)
@@ -59,13 +60,17 @@ int main() {
     MetadataMap addressBook;
     PRINT("[Setup] Global address book created.\n");
 
+    // Create the global, shared packet lifecycle store
+    PacketStore packetStore;
+    PRINT("[Setup] Packet lifecycle store created.\n");
+
     // --- 2. Create and Start all Nodes ---
     
     // Store nodes as unique_ptrs on the heap (Node is non-copyable)
     std::vector<std::unique_ptr<Node>> nodes;
 
     for (int i = 0; i < 6; ++i) {
-        nodes.push_back(std::make_unique<Node>(i, network, addressBook));
+        nodes.push_back(std::make_unique<Node>(i, network, addressBook, packetStore));
     }
     PRINT("[Setup] All 6 nodes created.\n");
 
@@ -76,6 +81,8 @@ int main() {
     
     PRINT("\n--- C++ Network Engine is LIVE ---\n");
     PRINT("All nodes running. Inject packets via POST http://127.0.0.1:" + std::to_string(NODE_PORTS.at(0)) + "/inject\n");
+    PRINT("Query packet status via GET http://127.0.0.1:" + std::to_string(NODE_PORTS.at(0)) + "/status?id=PACKET_ID\n");
+    PRINT("View all packets via GET http://127.0.0.1:" + std::to_string(NODE_PORTS.at(0)) + "/packets\n");
 
     // --- 3. Keep the Main Thread Alive ---
     // If main() exits, the entire program (and all node threads)
