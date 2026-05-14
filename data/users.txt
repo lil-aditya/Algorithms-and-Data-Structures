@@ -1,2 +1,0 @@
-UserA|pubkey_userA_example
-UserB|pubkey_userB_example

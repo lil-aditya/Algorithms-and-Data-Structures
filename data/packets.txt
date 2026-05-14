@@ -1,2 +1,0 @@
-pkt1|UserA|UserB|Hello
-pkt2|UserC|UserD|Critical
