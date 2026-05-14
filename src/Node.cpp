@@ -8,15 +8,14 @@ std::mutex Node::logMutex;
 
 // --- Constructor ---
 // Initializes the node's state
-Node::Node(int id, Graph& graph, MetadataMap& book)
-    : nodeID(id), networkMap(graph), addressBook(book), running(true) {
+Node::Node(int id, Graph& graph, MetadataMap& book, PacketStore& store)
+    : nodeID(id), networkMap(graph), addressBook(book), packetStore(store), running(true) {
     
     // Each node generates its own unique identity (keys)
     nodeKeys = generateKeys(id);
     
     // Add this node's *public* keys to the global address book
     // so other nodes can verify its packets in the future.
-    // (We use std::to_string to convert the numbers to strings for the map)
     std::string id_str = std::to_string(nodeID);
     addressBook.insert(id_str + "_pub_e", std::to_string(nodeKeys.e));
     addressBook.insert(id_str + "_pub_n", std::to_string(nodeKeys.n));
@@ -55,47 +54,59 @@ void Node::logMessage(const std::string& msg) {
     sharedLog.push_back(msg);
 }
 
-// --- Thread 1: The Server (Listens for packets) ---
-// This is the "Producer"
+// ===========================================================================
+// Thread 1: The Server (Listens for packets)  —  "Producer"
+// ===========================================================================
 void Node::runServer() {
     
     // --- Endpoint 1: Node-to-Node communication ---
-    // This endpoint is used when another node forwards a packet to this node.
+    // Used when another node forwards a packet to this node.
     svr.Post("/packet", [this](const httplib::Request& req, httplib::Response& res) {
         try {
-            // 1. Deserialize JSON text into a C++ DataPacket struct
             DataPacket p = json::parse(req.body);
             
-            // 2. Lock the inbox and push the new packet
+            // Track: packet RECEIVED at this intermediate node
+            packetStore.updateStatus(p.id, "RECEIVED", nodeID,
+                "Received from forwarding node");
+
             {
-                // The lock_guard automatically locks/unlocks the mutex
                 std::lock_guard<std::mutex> guard(inboxMutex);
-                inbox.push(p); // Push onto the priority queue
+                inbox.push(p);
             }
+
+            // Track: packet QUEUED in this node's priority inbox
+            packetStore.updateStatus(p.id, "QUEUED", nodeID,
+                "Queued with urgency " + std::to_string(p.urgency));
             
             logMessage("[Node " + std::to_string(nodeID) + "] Received packet " + p.id + " from sender " + p.senderID);
-            res.set_content("{\"status\": \"ACK\"}", "application/json"); // Send "OK"
+            res.set_content("{\"status\": \"ACK\"}", "application/json");
         
         } catch (json::parse_error& e) {
-            logMessage("[Node " + std::to_string(nodeID) + "] ❌ Received invalid JSON. Discarding.");
+            logMessage("[Node " + std::to_string(nodeID) + "] Received invalid JSON. Discarding.");
             res.set_content("{\"error\": \"Invalid JSON\"}", 400, "application/json");
         }
     });
 
     // --- Endpoint 2: External Packet Injection ---
-    // This endpoint is used by external clients (curl, frontend) to inject
+    // Used by external clients (curl, frontend) to inject
     // a *new* packet into the network starting at this node.
     svr.Post("/inject", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             DataPacket p = json::parse(req.body);
             logMessage("[Node " + std::to_string(nodeID) + "] === INJECTION RECEIVED ===");
-            logMessage("[Node " + std::to_string(nodeID) + "] New packet " + p.id + " from UI for " + p.senderID);
+            logMessage("[Node " + std::to_string(nodeID) + "] New packet " + p.id + " for destination " + std::to_string(p.destinationID));
 
-            // This node signs the data with its own private key
-            // and stamps itself as the sender so verification works
+            // Track: initialize the packet's lifecycle record
+            packetStore.initPacket(p.id, nodeID, p.destinationID, p.urgency);
+
+            // Sign the packet with this node's private key
             p.senderID = std::to_string(nodeID);
             p.signature = signData(p.data, nodeKeys);
             logMessage("[Node " + std::to_string(nodeID) + "] Packet signed by node " + p.senderID + " with signature: " + std::to_string(p.signature));
+
+            // Track: SIGNED
+            packetStore.updateStatus(p.id, "SIGNED", nodeID,
+                "signature: " + std::to_string(p.signature));
 
             // Push to our *own* inbox to start the journey
             {
@@ -103,10 +114,14 @@ void Node::runServer() {
                 inbox.push(p);
             }
 
+            // Track: QUEUED
+            packetStore.updateStatus(p.id, "QUEUED", nodeID,
+                "Queued with urgency " + std::to_string(p.urgency));
+
             res.set_content("{\"status\": \"Packet Signed and Injected\"}", "application/json");
         
         } catch (json::parse_error& e) {
-            logMessage("[Node " + std::to_string(nodeID) + "] ❌ Received invalid JSON from UI. Discarding.");
+            logMessage("[Node " + std::to_string(nodeID) + "] Received invalid JSON from UI. Discarding.");
             res.set_content("{\"error\": \"Invalid JSON\"}", 400, "application/json");
         }
     });
@@ -116,7 +131,6 @@ void Node::runServer() {
     svr.Get("/log", [this](const httplib::Request& /*req*/, httplib::Response& res) {
         json j;
         {
-            // Lock the log to safely copy it
             std::lock_guard<std::mutex> guard(logMutex);
             j = sharedLog; 
         }
@@ -129,48 +143,65 @@ void Node::runServer() {
         res.set_content("{\"status\": \"ONLINE\"}", "application/json");
     });
 
+    // --- Endpoint 5: Single Packet Status Query ---
+    // GET /status?id=pkt_001 → returns full lifecycle of that packet
+    svr.Get("/status", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string packetID = req.get_param_value("id");
+        if (packetID.empty()) {
+            res.set_content("{\"error\": \"Missing 'id' query parameter. Use /status?id=pkt_001\"}", 400, "application/json");
+            return;
+        }
+        json result = packetStore.getPacket(packetID);
+        res.set_content(result.dump(2), "application/json");
+    });
+
+    // --- Endpoint 6: All Packets Dashboard ---
+    // GET /packets → returns all tracked packets and their current statuses
+    svr.Get("/packets", [this](const httplib::Request& /*req*/, httplib::Response& res) {
+        json result = packetStore.getAllPackets();
+        res.set_content(result.dump(2), "application/json");
+    });
+
     // Start the server on its unique port
     logMessage("[Node " + std::to_string(nodeID) + "] Server listening on port " + std::to_string(NODE_PORTS.at(nodeID)));
     if (!svr.listen("0.0.0.0", NODE_PORTS.at(nodeID))) {
-         logMessage("[Node " + std::to_string(nodeID) + "] ❌ FAILED to bind to port " + std::to_string(NODE_PORTS.at(nodeID)));
+         logMessage("[Node " + std::to_string(nodeID) + "] FAILED to bind to port " + std::to_string(NODE_PORTS.at(nodeID)));
     }
 }
 
-// --- Thread 2: The Worker (Processes inbox) ---
-// This is the "Consumer"
+// ===========================================================================
+// Thread 2: The Worker (Processes inbox)  —  "Consumer"
+// ===========================================================================
 void Node::runWorker() {
-    // This loop runs forever (until 'running' is false)
     while (running) {
         std::optional<DataPacket> p_opt;
 
         // --- Critical Section: Check Inbox ---
-        // We only lock the mutex for the *shortest possible time*
-        // just to see if the queue is empty and pop one item.
         {
             std::lock_guard<std::mutex> guard(inboxMutex);
             if (!inbox.empty()) {
-                p_opt = inbox.pop(); // pop() gets the highest-priority packet
+                p_opt = inbox.pop();
             }
-        } // Mutex is released here
-        // --- End Critical Section ---
+        }
 
         if (p_opt) {
-            // If we *got* a packet, we process it.
-            // This happens *outside* the lock, so the server thread
-            // can still receive new packets while we do this work.
             processPacket(*p_opt);
         } else {
-            // No packets. Sleep for a moment to prevent
-            // this thread from using 100% CPU (busy-waiting).
+            // No packets — sleep to avoid busy-waiting
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
 }
 
-// --- The Core AQoS Logic ---
-// This is the "brain" from your Phase 2 simulation, now running inside the node.
+// ===========================================================================
+// The Core AQoS Logic  —  verify, route, forward/deliver
+// ===========================================================================
 void Node::processPacket(DataPacket packet) {
     logMessage("[Node " + std::to_string(nodeID) + "] Processing packet " + packet.id);
+
+    // Track: PROCESSING
+    packetStore.updateStatus(packet.id, "PROCESSING", nodeID,
+        "Worker thread picked up packet");
 
     // 1. LOOKUP sender's public key from the global address book
     std::string e_key = packet.senderID + "_pub_e";
@@ -180,8 +211,10 @@ void Node::processPacket(DataPacket packet) {
 
     // Check if the key even exists
     if (e_str.empty() || n_str.empty()) {
-        logMessage("[Node " + std::to_string(nodeID) + "] ❌ Signature FAILED. Reason: No public key found for sender " + packet.senderID + ". DROPPING.");
-        return; // Drop the packet
+        logMessage("[Node " + std::to_string(nodeID) + "] Signature FAILED. No public key for sender " + packet.senderID + ". DROPPING.");
+        packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+            "No public key found for sender " + packet.senderID);
+        return;
     }
     
     // Convert keys from string back to numbers
@@ -190,34 +223,46 @@ void Node::processPacket(DataPacket packet) {
         senderPubKey.e = std::stoull(e_str);
         senderPubKey.n = std::stoull(n_str);
     } catch (const std::exception& e) {
-        logMessage("[Node " + std::to_string(nodeID) + "] ❌ Signature FAILED. Reason: Invalid key format in address book. DROPPING.");
-        return; // Drop the packet
+        logMessage("[Node " + std::to_string(nodeID) + "] Signature FAILED. Invalid key format. DROPPING.");
+        packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+            "Invalid key format in address book");
+        return;
     }
-
 
     // 2. VERIFY signature (The "Authenticated" part)
     bool isValid = verifySignature(packet.data, packet.signature, senderPubKey);
 
     if (!isValid) {
-        logMessage("[Node " + std::to_string(nodeID) + "] ❌ Signature FAILED. Reason: Data/Signature mismatch. DROPPING.");
-        return; // Drop the packet
+        logMessage("[Node " + std::to_string(nodeID) + "] Signature FAILED. Data/Signature mismatch. DROPPING.");
+        packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+            "Signature mismatch — data may be tampered");
+        return;
     }
     
-    // If we get here, the signature is valid.
-    logMessage("[Node " + std::to_string(nodeID) + "] ✅ Signature VALID. Packet trusted.");
+    // If we get here, the signature is valid
+    logMessage("[Node " + std::to_string(nodeID) + "] Signature VALID. Packet trusted.");
+
+    // Track: VERIFIED
+    packetStore.updateStatus(packet.id, "VERIFIED", nodeID,
+        "Signature verified against sender " + packet.senderID);
 
     // 3. DECISION (Forward or Deliver)
     if (nodeID == packet.destinationID) {
         // This is the final destination
-        logMessage("[Node " + std::to_string(nodeID) + "] ✅ Packet DELIVERED to final destination.");
+        logMessage("[Node " + std::to_string(nodeID) + "] Packet DELIVERED to final destination.");
+
+        // Track: DELIVERED
+        packetStore.updateStatus(packet.id, "DELIVERED", nodeID,
+            "Packet reached destination Node " + std::to_string(nodeID));
     
     } else {
-        // This is an intermediate node. Forward it.
-        // Find the next hop using the global graph
+        // This is an intermediate node — forward it
         std::vector<int> path = networkMap.findShortestPath(nodeID, packet.destinationID);
         
-        if (path.size() < 2) { // path[0] is self, path[1] is next hop
-            logMessage("[Node " + std::to_string(nodeID) + "] ❌ Forwarding FAILED. No path to destination " + std::to_string(packet.destinationID) + ". DROPPING.");
+        if (path.size() < 2) {
+            logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. No path to destination " + std::to_string(packet.destinationID) + ". DROPPING.");
+            packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+                "No route to destination " + std::to_string(packet.destinationID));
             return;
         }
         
@@ -226,21 +271,24 @@ void Node::processPacket(DataPacket packet) {
 
         logMessage("[Node " + std::to_string(nodeID) + "] Forwarding packet to next hop: Node " + std::to_string(nextHopID) + " (Port " + std::to_string(nextHopPort) + ")");
 
+        // Track: FORWARDED
+        packetStore.updateStatus(packet.id, "FORWARDED", nodeID,
+            "Node " + std::to_string(nodeID) + " -> Node " + std::to_string(nextHopID));
+
         // --- Send Packet to Next Node ---
-        // Create a *new* HTTP client to send the packet
         httplib::Client cli("127.0.0.1", nextHopPort);
         cli.set_connection_timeout(1); 
         
-        // We re-serialize the *original* packet to forward it.
-        // The signature and senderID do not change.
         if (auto res = cli.Post("/packet", json(packet).dump(), "application/json")) {
-            // Check if the next node successfully received it
             if (res->status != 200) {
-                logMessage("[Node " + std::to_string(nodeID) + "] ❌ Forwarding FAILED. Node " + std::to_string(nextHopID) + " responded with error " + std::to_string(res->status));
+                logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. Node " + std::to_string(nextHopID) + " responded with error " + std::to_string(res->status));
+                packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+                    "Next hop Node " + std::to_string(nextHopID) + " returned HTTP " + std::to_string(res->status));
             }
         } else {
-            // This error (e.g., "Connection refused") means the next node is offline
-            logMessage("[Node " + std::to_string(nodeID) + "] ❌ Forwarding FAILED. Could not connect to Node " + std::to_string(nextHopID));
+            logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. Could not connect to Node " + std::to_string(nextHopID));
+            packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+                "Connection refused by Node " + std::to_string(nextHopID));
         }
     }
 }
