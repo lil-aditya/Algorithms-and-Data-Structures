@@ -1,11 +1,44 @@
 #include "rsa_signature.hpp"
+#include <stdexcept>
 
-// Assumes your keys are generated here or in the header
-Keys generateKeys() {
+/**
+ * @brief Returns a unique toy RSA key pair for each node.
+ *
+ * Each pair is derived from distinct small primes (p, q). The keys are
+ * toy-level (fit in uint64_t), but each node has a genuinely different
+ * identity so signature verification actually proves sender identity.
+ *
+ * All 6 triplets have been verified: sign(data, d, n) then
+ * verify(data, e, n) returns true for multiple test strings.
+ *
+ * @param nodeID  The node's ID (0-5).
+ * @return Keys   The {n, e, d} triplet for that node.
+ */
+Keys generateKeys(int nodeID) {
+    static const struct { uint64_t n, e, d; } pool[] = {
+        // Node 0: p=100003, q=100103
+        { 10010600309ULL, 65537ULL, 7196851037ULL },
+        // Node 1: p=100207, q=100313
+        { 10052064791ULL, 65537ULL, 791731745ULL },
+        // Node 2: p=100417, q=100517
+        { 10093615589ULL, 65537ULL, 4482796289ULL },
+        // Node 3: p=100621, q=100733
+        { 10135855193ULL, 65537ULL, 1597745393ULL },
+        // Node 4: p=100847, q=100957
+        { 10181210579ULL, 65537ULL, 4683571625ULL },
+        // Node 5: p=101063, q=101173
+        { 10224846899ULL, 65537ULL, 1585875353ULL },
+    };
+
+    if (nodeID < 0 || nodeID >= 6) {
+        throw std::out_of_range(
+            "generateKeys: nodeID must be 0-5, got " + std::to_string(nodeID));
+    }
+
     Keys k;
-    k.n = 1009840029511;
-    k.e = 65537;//public key
-    k.d = 920144150369;//private key
+    k.n = pool[nodeID].n;
+    k.e = pool[nodeID].e;
+    k.d = pool[nodeID].d;
     return k;
 }
 
