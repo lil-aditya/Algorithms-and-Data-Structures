@@ -59,15 +59,23 @@ curl http://127.0.0.1:8080/check
 ```
 
 **Inject a packet** — send a message from Node 0 to Node 5:
-```bash
-curl -X POST http://127.0.0.1:8080/inject ^
-  -H "Content-Type: application/json" ^
-  -d "{\"id\":\"pkt_001\",\"urgency\":10,\"data\":\"HELLO_WORLD\",\"senderID\":\"0\",\"signature\":0,\"destinationID\":5}"
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8080/inject" -Method POST -ContentType "application/json" -Body '{"id":"pkt_001","urgency":15,"data":"REBOOT_SERVER","senderID":"0","signature":0,"destinationID":5}'
 ```
 
-**View logs** — see what happened:
-```bash
-curl http://127.0.0.1:8080/log
+**Query packet lifecycle** — see the full journey of a packet:
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/status?id=pkt_001
+```
+
+**View all tracked packets** — dashboard view:
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/packets
+```
+
+**View logs** — raw console output:
+```powershell
+(Invoke-RestMethod http://127.0.0.1:8080/log) | ForEach-Object { Write-Host $_ }
 ```
 
 ## API Endpoints (per node)
@@ -76,8 +84,10 @@ curl http://127.0.0.1:8080/log
 |---|---|---|
 | `POST` | `/inject` | Inject a new packet (signs it, queues it) |
 | `POST` | `/packet` | Node-to-node forwarding (internal) |
+| `GET` | `/status?id=xxx` | Full lifecycle of a single packet |
+| `GET` | `/packets` | All tracked packets and their statuses |
 | `GET` | `/check` | Health check |
-| `GET` | `/log` | Retrieve shared log |
+| `GET` | `/log` | Retrieve shared console log |
 
 ## Project Structure
 
@@ -85,6 +95,7 @@ curl http://127.0.0.1:8080/log
 src/
 ├── main.cpp             # Entry point: creates graph, nodes, runs forever
 ├── Node.cpp             # Per-node HTTP server + worker + packet processing
+├── packet_store.cpp     # Thread-safe packet lifecycle tracker
 ├── graph_routing.cpp    # Graph (adjacency list) + BFS shortest path
 ├── priority_engine.cpp  # Priority queue wrapper
 ├── rsa_signature.cpp    # Toy RSA sign/verify with per-node distinct keys
@@ -95,6 +106,7 @@ src/
 
 include/
 ├── Node.hpp             # Node class definition
+├── packet_store.hpp     # PacketRecord, StatusEvent, PacketStore class
 ├── priority_engine.hpp  # DataPacket struct + PriorityEngine class
 ├── graph_routing.hpp    # Graph class
 ├── hashmap.hpp          # MetadataMap class
