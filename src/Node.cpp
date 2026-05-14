@@ -12,7 +12,7 @@ Node::Node(int id, Graph& graph, MetadataMap& book)
     : nodeID(id), networkMap(graph), addressBook(book), running(true) {
     
     // Each node generates its own unique identity (keys)
-    nodeKeys = generateKeys();
+    nodeKeys = generateKeys(id);
     
     // Add this node's *public* keys to the global address book
     // so other nodes can verify its packets in the future.
@@ -51,7 +51,7 @@ void Node::logMessage(const std::string& msg) {
     // Print to the C++ console
     std::cout << msg << std::endl; 
     
-    // Add to the shared log for the Python API to fetch
+    // Add to the shared log for the dashboard/API to fetch
     sharedLog.push_back(msg);
 }
 
@@ -82,19 +82,20 @@ void Node::runServer() {
         }
     });
 
-    // --- Endpoint 2: Python/UI Packet Injection ---
-    // This endpoint is used by the Python API to inject a *new* packet
-    // into the network (starting at this node).
+    // --- Endpoint 2: External Packet Injection ---
+    // This endpoint is used by external clients (curl, frontend) to inject
+    // a *new* packet into the network starting at this node.
     svr.Post("/inject", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             DataPacket p = json::parse(req.body);
             logMessage("[Node " + std::to_string(nodeID) + "] === INJECTION RECEIVED ===");
             logMessage("[Node " + std::to_string(nodeID) + "] New packet " + p.id + " from UI for " + p.senderID);
 
-            // This node signs the data on behalf of the user/sender
-            // We use this node's private key
+            // This node signs the data with its own private key
+            // and stamps itself as the sender so verification works
+            p.senderID = std::to_string(nodeID);
             p.signature = signData(p.data, nodeKeys);
-            logMessage("[Node " + std::to_string(nodeID) + "] Packet signed with signature: " + std::to_string(p.signature));
+            logMessage("[Node " + std::to_string(nodeID) + "] Packet signed by node " + p.senderID + " with signature: " + std::to_string(p.signature));
 
             // Push to our *own* inbox to start the journey
             {
@@ -110,9 +111,9 @@ void Node::runServer() {
         }
     });
 
-    // --- Endpoint 3: Web Visualization Log ---
-    // This endpoint is called by the Python API to get log updates for the UI
-    svr.Get("/log", [this](const httplib::Request& req, httplib::Response& res) {
+    // --- Endpoint 3: Log Retrieval ---
+    // Returns the shared log for dashboard or debugging
+    svr.Get("/log", [this](const httplib::Request& /*req*/, httplib::Response& res) {
         json j;
         {
             // Lock the log to safely copy it
@@ -122,9 +123,9 @@ void Node::runServer() {
         res.set_content(j.dump(), "application/json");
     });
     
-    // --- Endpoint 4: Python API Health Check ---
-    // The Python API calls this to see if the C++ server is online
-    svr.Get("/check", [](const httplib::Request& req, httplib::Response& res) {
+    // --- Endpoint 4: Health Check ---
+    // External clients call this to verify the node is online
+    svr.Get("/check", [](const httplib::Request& /*req*/, httplib::Response& res) {
         res.set_content("{\"status\": \"ONLINE\"}", "application/json");
     });
 
@@ -178,7 +179,7 @@ void Node::processPacket(DataPacket packet) {
     std::string n_str = addressBook.get(n_key);
 
     // Check if the key even exists
-    if (e_str == "NOT_FOUND" || n_str == "NOT_FOUND") {
+    if (e_str.empty() || n_str.empty()) {
         logMessage("[Node " + std::to_string(nodeID) + "] ❌ Signature FAILED. Reason: No public key found for sender " + packet.senderID + ". DROPPING.");
         return; // Drop the packet
     }
@@ -227,7 +228,7 @@ void Node::processPacket(DataPacket packet) {
 
         // --- Send Packet to Next Node ---
         // Create a *new* HTTP client to send the packet
-        httplib::Client cli("localhost", nextHopPort);
+        httplib::Client cli("127.0.0.1", nextHopPort);
         cli.set_connection_timeout(1); 
         
         // We re-serialize the *original* packet to forward it.
