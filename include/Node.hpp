@@ -14,6 +14,7 @@
 #include "graph_routing.hpp"
 #include "hashmap.hpp"
 #include "rsa_signature.hpp"
+#include "packet_store.hpp"
 // NOTE: We do not need logger.hpp here, only in Node.cpp
 
 // --- New 3rd Party Dependencies ---
@@ -41,8 +42,9 @@ public:
      * @param id This node's unique ID (e.g., 0, 1, 2...).
      * @param graph A reference to the global network map.
      * @param book A reference to the global address book (for public keys).
+     * @param store A reference to the shared packet lifecycle store.
      */
-    Node(int id, Graph& graph, MetadataMap& book);
+    Node(int id, Graph& graph, MetadataMap& book, PacketStore& store);
     
     /**
      * @brief Destructor. Gracefully shuts down the node's threads.
@@ -66,6 +68,7 @@ private:
     PriorityEngine inbox;
     Graph& networkMap;
     MetadataMap& addressBook;
+    PacketStore& packetStore;
 
     // --- Concurrency Components ---
     std::thread serverThread; // Thread for listening for HTTP packets
