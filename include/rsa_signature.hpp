@@ -1,15 +1,4 @@
 
-// #pragma once
-// #include <cstdint>
-// #include <string>
-// struct RSAKeys {
-//     uint64_t n;
-//     uint64_t e;
-//     uint64_t d;
-// };
-// RSAKeys generateRSAKeys();
-// uint64_t signData(uint64_t hash, const RSAKeys &keys);
-// uint64_t verifySignature(uint64_t signature, const RSAKeys &keys);
 
 #pragma once
 
@@ -26,9 +15,10 @@ struct Keys {
 };
 
 /**
- * @brief Generates the hard-coded "toy" keys for the demo.
+ * @brief Generates a unique toy RSA key pair for the given node.
+ * @param nodeID  The node's ID (0-5).
  */
-Keys generateKeys();
+Keys generateKeys(int nodeID);
 
 /**
  * @brief Signs a data string with the private key.
