@@ -1,0 +1,47 @@
+[
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/main.cpp -o build/main.o",
+    "file": "src/main.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/Node.cpp -o build/Node.o",
+    "file": "src/Node.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/graph_routing.cpp -o build/graph_routing.o",
+    "file": "src/graph_routing.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/hashing.cpp -o build/hashing.o",
+    "file": "src/hashing.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/hashmap.cpp -o build/hashmap.o",
+    "file": "src/hashmap.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/number_theory.cpp -o build/number_theory.o",
+    "file": "src/number_theory.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/priority_engine.cpp -o build/priority_engine.o",
+    "file": "src/priority_engine.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/rsa_signature.cpp -o build/rsa_signature.o",
+    "file": "src/rsa_signature.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/logger.cpp -o build/logger.o",
+    "file": "src/logger.cpp"
+  }
+]
