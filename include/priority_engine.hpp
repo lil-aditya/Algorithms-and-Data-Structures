@@ -1,88 +1,49 @@
-
-// #pragma once
-// #include <queue>
-// #include <string>
-// #include <optional>
-// #include <cstdint>
-// using namespace std;
-// struct DataPacket {
-//     string id;
-//     uint32_t urgency; // higher => more urgent
-//     string data;     // The actual message, e.g., "REBOOT_SERVER"
-//     string senderID; // Who sent it, e.g., "Admin"
-//     uint64_t signature;
-
-//     DataPacket(const string& i, uint32_t u, const string& d, 
-//                const string& s, uint64_t sig)
-//         : id(i), urgency(u), data(d), senderID(s), signature(sig) {}
-
-//     // This tells the priority_queue how to sort
-//     bool operator<(const DataPacket& other) const {
-//         return urgency < other.urgency; // Lower number = lower priority
-//     }
-// };
-
-// class PriorityEngine {
-// private:
-//     priority_queue<DataPacket> pq;
-// public:
-//     void push(const DataPacket &p);
-//     optional<DataPacket> pop();
-//     bool empty() const;
-//     size_t size() const;
-// };
 #pragma once
 #include <queue>
 #include <string>
 #include <optional>
 #include <cstdint>
 
-// --- NEW: Step 1 ---
-// Include the JSON library header you downloaded
 #include "json.hpp"
 
-// Make it easy to use the json type
 using json = nlohmann::json;
 using namespace std;
 
 
+/**
+ * @struct DataPacket
+ * @brief Represents a single message travelling through the network.
+ */
 struct DataPacket {
     string id;
-    uint32_t urgency; // higher => more urgent
-    string data;      // The actual message, e.g., "REBOOT_SERVER"
-    string senderID;  // Who sent it, e.g., "Admin"
+    uint32_t urgency;     // Higher = more urgent
+    string data;          // The actual message payload
+    string senderID;      // ID of the node that signed this packet
     uint64_t signature;
+    int destinationID;    // Target node ID for routing
 
-    // --- NEW: Step 2 ---
-    // Add a destination for network routing
-    int destinationID;
-
-    // --- NEW: Step 3 ---
-    // Add a default constructor. This is REQUIRED by the JSON library
-    // to create an empty object before filling it with data.
+    /// Default constructor (required by nlohmann/json for deserialization)
     DataPacket() : urgency(0), signature(0), destinationID(-1) {}
 
-    // --- MODIFIED: Step 4 ---
-    // Update the main constructor to include the new destinationID
+    /// Full constructor
     DataPacket(const string& i, uint32_t u, const string& d, 
                const string& s, uint64_t sig, int dest)
         : id(i), urgency(u), data(d), senderID(s), signature(sig), destinationID(dest) {}
 
-    // This tells the priority_queue how to sort (no change needed)
+    /// Priority comparison: lower urgency = lower priority
     bool operator<(const DataPacket& other) const {
-        return urgency < other.urgency; // Lower number = lower priority
+        return urgency < other.urgency;
     }
 };
 
-// --- NEW: Step 5 ---
-// This is the "magic" macro that tells the nlohmann/json library
-// how to convert the DataPacket struct to and from a JSON string.
-// It MUST list all the members of the struct.
+// JSON serialization macro — maps all struct fields to/from JSON
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DataPacket, id, urgency, data, senderID, signature, destinationID)
 
 
-// --- NO CHANGES BELOW THIS LINE ---
-
+/**
+ * @class PriorityEngine
+ * @brief A max-heap priority queue for DataPackets (highest urgency popped first).
+ */
 class PriorityEngine {
 private:
     priority_queue<DataPacket> pq;
