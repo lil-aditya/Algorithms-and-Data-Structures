@@ -3,18 +3,21 @@
         {
             "name": "Win32",
             "includePath": [
+                "${workspaceFolder}/include",
                 "${workspaceFolder}/**"
             ],
             "defines": [
                 "_DEBUG",
                 "UNICODE",
-                "_UNICODE"
+                "_UNICODE",
+                "_WIN32_WINNT=0x0A00",
+                "WIN32_LEAN_AND_MEAN",
+                "NOMINMAX"
             ],
-            "compilerPath": "C:\\MinGW\\bin\\gcc.exe",
+            "compilerPath": "D:/mingw2/mingw64/bin/g++.exe",
             "cStandard": "c11",
             "cppStandard": "c++17",
-            "intelliSenseMode": "windows-gcc-x86",
-            "configurationProvider": "ms-vscode.makefile-tools"
+            "intelliSenseMode": "windows-gcc-x64"
         }
     ],
     "version": 4
