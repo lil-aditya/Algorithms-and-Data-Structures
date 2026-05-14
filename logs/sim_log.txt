@@ -1,0 +1,8 @@
+--- ADIPE Network Engine ---
+[Setup] Setting up world...
+[Setup] Network graph created.
+[Setup] Global address book created.
+[Setup] All 6 nodes created.
+
+--- C++ Network Engine is LIVE ---
+All nodes running. Inject packets via POST http://127.0.0.1:8080/inject
