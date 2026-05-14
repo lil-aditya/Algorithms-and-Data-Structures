@@ -43,5 +43,10 @@
     "directory": "e:/DSA_PROJECT_",
     "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/logger.cpp -o build/logger.o",
     "file": "src/logger.cpp"
+  },
+  {
+    "directory": "e:/DSA_PROJECT_",
+    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/packet_store.cpp -o build/packet_store.o",
+    "file": "src/packet_store.cpp"
   }
 ]
