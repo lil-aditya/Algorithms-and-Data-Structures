@@ -1,6 +1,6 @@
 
 #include "graph_routing.hpp"
-#include <bits/stdc++.h>
+#include <algorithm>
 using namespace std;
 
 Graph::Graph(int nodes): numNodes(nodes){}
