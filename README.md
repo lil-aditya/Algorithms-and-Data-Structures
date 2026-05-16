@@ -34,17 +34,23 @@ Two parallel paths from Node 0 to Node 5: `0→1→3→5` and `0→2→4→5`.
 
 ## Build
 
+**Step 1: Configure with CMake**
 ```bash
-make
+mkdir build
+cd build
+cmake .. -G "MinGW Makefiles"
 ```
 
-This produces `build/dsa_project.exe`.
+**Step 2: Compile the Engine**
+```bash
+cmake --build .
+```
+
+This produces `dsa_project.exe` inside the `build` directory.
 
 ## Run
 
 ```bash
-make run
-# or directly:
 ./build/dsa_project.exe
 ```
 
