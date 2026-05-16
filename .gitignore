@@ -52,3 +52,5 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
+# SQLite Database
+adipe.db
