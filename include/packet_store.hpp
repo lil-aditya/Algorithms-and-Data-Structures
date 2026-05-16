@@ -6,6 +6,7 @@
 #include <mutex>
 #include <cstdint>
 #include "json.hpp"
+#include "sqlite3.h"
 
 using json = nlohmann::json;
 
@@ -58,6 +59,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(PacketRecord, packetID, currentStatus,
  */
 class PacketStore {
 public:
+    PacketStore();
+    ~PacketStore();
+
     /// Initialize tracking for a newly injected packet
     void initPacket(const std::string& packetID, int sourceNode,
                     int destNode, uint32_t urgency);
@@ -78,7 +82,14 @@ public:
 private:
     std::unordered_map<std::string, PacketRecord> records;
     mutable std::mutex storeMutex;
+    sqlite3* db;
 
     /// Returns current wall-clock time as "HH:MM:SS.mmm"
     static std::string getTimestamp();
+    
+    /// Helper to execute SQL statements
+    void executeSQL(const std::string& sql);
+    
+    /// Helper to load initial data from SQLite
+    void loadFromDB();
 };
