@@ -6,6 +6,84 @@
 #include <sstream>
 
 // ---------------------------------------------------------------------------
+// Constructor / Destructor / SQLite Initialization
+// ---------------------------------------------------------------------------
+
+PacketStore::PacketStore() : db(nullptr) {
+    if (sqlite3_open("adipe.db", &db) != SQLITE_OK) {
+        db = nullptr;
+        return;
+    }
+
+    std::string sqlPackets = "CREATE TABLE IF NOT EXISTS packets ("
+                             "packetID TEXT PRIMARY KEY, currentStatus TEXT, "
+                             "sourceNodeID INTEGER, destinationNodeID INTEGER, "
+                             "urgency INTEGER, dropReason TEXT);";
+                             
+    std::string sqlEvents = "CREATE TABLE IF NOT EXISTS events ("
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT, packetID TEXT, "
+                            "timestamp TEXT, status TEXT, nodeID INTEGER, detail TEXT, "
+                            "FOREIGN KEY(packetID) REFERENCES packets(packetID));";
+
+    executeSQL(sqlPackets);
+    executeSQL(sqlEvents);
+
+    loadFromDB();
+}
+
+PacketStore::~PacketStore() {
+    if (db) {
+        sqlite3_close(db);
+    }
+}
+
+void PacketStore::executeSQL(const std::string& sql) {
+    if (!db) return;
+    char* errMsg = nullptr;
+    if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        sqlite3_free(errMsg);
+    }
+}
+
+void PacketStore::loadFromDB() {
+    if (!db) return;
+    std::lock_guard<std::mutex> guard(storeMutex);
+
+    std::string sql = "SELECT packetID, currentStatus, sourceNodeID, destinationNodeID, urgency, dropReason FROM packets;";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            PacketRecord rec;
+            rec.packetID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            rec.currentStatus = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            rec.sourceNodeID = sqlite3_column_int(stmt, 2);
+            rec.destinationNodeID = sqlite3_column_int(stmt, 3);
+            rec.urgency = sqlite3_column_int(stmt, 4);
+            const char* dr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+            rec.dropReason = dr ? dr : "";
+            records[rec.packetID] = rec;
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    sql = "SELECT packetID, timestamp, status, nodeID, detail FROM events ORDER BY id ASC;";
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            std::string packetID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            StatusEvent ev;
+            ev.timestamp = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            ev.status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            ev.nodeID = sqlite3_column_int(stmt, 3);
+            const char* det = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+            ev.detail = det ? det : "";
+            
+            records[packetID].events.push_back(ev);
+        }
+        sqlite3_finalize(stmt);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Timestamp helper
 // ---------------------------------------------------------------------------
 
@@ -52,6 +130,16 @@ void PacketStore::initPacket(const std::string& packetID, int sourceNode,
     rec.events.push_back(ev);
 
     records[packetID] = rec;
+
+    // SQLite Persistence
+    std::string sqlPackets = "INSERT OR REPLACE INTO packets (packetID, currentStatus, sourceNodeID, destinationNodeID, urgency, dropReason) VALUES ('" + 
+                             packetID + "', 'RECEIVED', " + std::to_string(sourceNode) + ", " + 
+                             std::to_string(destNode) + ", " + std::to_string(urgency) + ", '');";
+    executeSQL(sqlPackets);
+    
+    std::string sqlEvents = "INSERT INTO events (packetID, timestamp, status, nodeID, detail) VALUES ('" +
+                            packetID + "', '" + ev.timestamp + "', 'RECEIVED', " + std::to_string(sourceNode) + ", 'Packet entered the network');";
+    executeSQL(sqlEvents);
 }
 
 void PacketStore::updateStatus(const std::string& packetID,
@@ -72,9 +160,29 @@ void PacketStore::updateStatus(const std::string& packetID,
     ev.detail    = detail;
     it->second.events.push_back(ev);
 
+    // Escape single quotes in detail for SQL
+    std::string safeDetail = detail;
+    size_t pos = 0;
+    while ((pos = safeDetail.find("'", pos)) != std::string::npos) {
+        safeDetail.replace(pos, 1, "''");
+        pos += 2;
+    }
+
     if (status == "DROPPED") {
         it->second.dropReason = detail;
     }
+
+    // SQLite Persistence
+    std::string sqlPackets = "UPDATE packets SET currentStatus = '" + status + "'";
+    if (status == "DROPPED") {
+        sqlPackets += ", dropReason = '" + safeDetail + "'";
+    }
+    sqlPackets += " WHERE packetID = '" + packetID + "';";
+    executeSQL(sqlPackets);
+
+    std::string sqlEvents = "INSERT INTO events (packetID, timestamp, status, nodeID, detail) VALUES ('" +
+                            packetID + "', '" + ev.timestamp + "', '" + status + "', " + std::to_string(nodeID) + ", '" + safeDetail + "');";
+    executeSQL(sqlEvents);
 }
 
 json PacketStore::getPacket(const std::string& packetID) const {
