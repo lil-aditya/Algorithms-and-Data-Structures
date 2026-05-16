@@ -1,52 +1,62 @@
 [
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/main.cpp -o build/main.o",
-    "file": "src/main.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/Node.cpp -o build/Node.o",
-    "file": "src/Node.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/graph_routing.cpp -o build/graph_routing.o",
-    "file": "src/graph_routing.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/hashing.cpp -o build/hashing.o",
-    "file": "src/hashing.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/hashmap.cpp -o build/hashmap.o",
-    "file": "src/hashmap.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/number_theory.cpp -o build/number_theory.o",
-    "file": "src/number_theory.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/priority_engine.cpp -o build/priority_engine.o",
-    "file": "src/priority_engine.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/rsa_signature.cpp -o build/rsa_signature.o",
-    "file": "src/rsa_signature.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/logger.cpp -o build/logger.o",
-    "file": "src/logger.cpp"
-  },
-  {
-    "directory": "e:/DSA_PROJECT_",
-    "command": "g++ -std=c++17 -O2 -Iinclude -Wall -Wextra -g -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -c src/packet_store.cpp -o build/packet_store.o",
-    "file": "src/packet_store.cpp"
-  }
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\main.cpp.obj -c E:\\DSA_PROJECT_\\src\\main.cpp",
+  "file": "E:/DSA_PROJECT_/src/main.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/main.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\Node.cpp.obj -c E:\\DSA_PROJECT_\\src\\Node.cpp",
+  "file": "E:/DSA_PROJECT_/src/Node.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/Node.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\graph_routing.cpp.obj -c E:\\DSA_PROJECT_\\src\\graph_routing.cpp",
+  "file": "E:/DSA_PROJECT_/src/graph_routing.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/graph_routing.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\hashing.cpp.obj -c E:\\DSA_PROJECT_\\src\\hashing.cpp",
+  "file": "E:/DSA_PROJECT_/src/hashing.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/hashing.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\hashmap.cpp.obj -c E:\\DSA_PROJECT_\\src\\hashmap.cpp",
+  "file": "E:/DSA_PROJECT_/src/hashmap.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/hashmap.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\number_theory.cpp.obj -c E:\\DSA_PROJECT_\\src\\number_theory.cpp",
+  "file": "E:/DSA_PROJECT_/src/number_theory.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/number_theory.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\priority_engine.cpp.obj -c E:\\DSA_PROJECT_\\src\\priority_engine.cpp",
+  "file": "E:/DSA_PROJECT_/src/priority_engine.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/priority_engine.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\rsa_signature.cpp.obj -c E:\\DSA_PROJECT_\\src\\rsa_signature.cpp",
+  "file": "E:/DSA_PROJECT_/src/rsa_signature.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/rsa_signature.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\logger.cpp.obj -c E:\\DSA_PROJECT_\\src\\logger.cpp",
+  "file": "E:/DSA_PROJECT_/src/logger.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/logger.cpp.obj"
+},
+{
+  "directory": "E:/DSA_PROJECT_/build",
+  "command": "D:\\mingw2\\mingw64\\bin\\c++.exe -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 @CMakeFiles/dsa_project.dir/includes_CXX.rsp -std=c++17 -Wall -Wextra -O2 -g -o CMakeFiles\\dsa_project.dir\\src\\packet_store.cpp.obj -c E:\\DSA_PROJECT_\\src\\packet_store.cpp",
+  "file": "E:/DSA_PROJECT_/src/packet_store.cpp",
+  "output": "CMakeFiles/dsa_project.dir/src/packet_store.cpp.obj"
+}
 ]
