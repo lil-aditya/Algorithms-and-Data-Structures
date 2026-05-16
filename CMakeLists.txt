@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # Project name and language
-project(ADIPE VERSION 1.0 LANGUAGES CXX)
+project(ADIPE VERSION 1.0 LANGUAGES CXX C)
 
 # Require C++17
 set(CMAKE_CXX_STANDARD 17)
@@ -23,6 +23,7 @@ set(SOURCES
     src/rsa_signature.cpp
     src/logger.cpp
     src/packet_store.cpp
+    src/sqlite3.c
 )
 
 # Create the main executable target
