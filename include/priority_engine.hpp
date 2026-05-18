@@ -1,55 +1,93 @@
 #pragma once
+
+#include <cstdint>
+#include <optional>
 #include <queue>
 #include <string>
-#include <optional>
-#include <cstdint>
 
 #include "json.hpp"
 
 using json = nlohmann::json;
-using namespace std;
-
 
 /**
  * @struct DataPacket
  * @brief Represents a single message travelling through the network.
  */
 struct DataPacket {
-    string id;
-    uint32_t urgency;     // Higher = more urgent
-    string data;          // The actual message payload
-    string senderID;      // ID of the node that signed this packet
+    std::string id;
+    uint32_t urgency;
+    std::string data;
+    std::string senderID;
     uint64_t signature;
-    int destinationID;    // Target node ID for routing
+    int destinationID;
+    int originNodeID;
+    int lastHopNodeID;
+    int64_t lastForwardedAtMs;
 
-    /// Default constructor (required by nlohmann/json for deserialization)
-    DataPacket() : urgency(0), signature(0), destinationID(-1) {}
+    DataPacket()
+        : urgency(0),
+          signature(0),
+          destinationID(-1),
+          originNodeID(-1),
+          lastHopNodeID(-1),
+          lastForwardedAtMs(0) {}
 
-    /// Full constructor
-    DataPacket(const string& i, uint32_t u, const string& d, 
-               const string& s, uint64_t sig, int dest)
-        : id(i), urgency(u), data(d), senderID(s), signature(sig), destinationID(dest) {}
+    DataPacket(const std::string& i, uint32_t u, const std::string& d,
+               const std::string& s, uint64_t sig, int dest,
+               int origin = -1, int lastHop = -1, int64_t forwardedAt = 0)
+        : id(i),
+          urgency(u),
+          data(d),
+          senderID(s),
+          signature(sig),
+          destinationID(dest),
+          originNodeID(origin),
+          lastHopNodeID(lastHop),
+          lastForwardedAtMs(forwardedAt) {}
 
-    /// Priority comparison: lower urgency = lower priority
     bool operator<(const DataPacket& other) const {
         return urgency < other.urgency;
     }
 };
 
-// JSON serialization macro — maps all struct fields to/from JSON
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DataPacket, id, urgency, data, senderID, signature, destinationID)
+inline void to_json(json& j, const DataPacket& p) {
+    j = json{
+        {"id", p.id},
+        {"urgency", p.urgency},
+        {"data", p.data},
+        {"senderID", p.senderID},
+        {"signature", p.signature},
+        {"destinationID", p.destinationID},
+        {"originNodeID", p.originNodeID},
+        {"lastHopNodeID", p.lastHopNodeID},
+        {"lastForwardedAtMs", p.lastForwardedAtMs}
+    };
+}
 
+inline void from_json(const json& j, DataPacket& p) {
+    p.id = j.value("id", "");
+    p.urgency = j.value("urgency", 0U);
+    p.data = j.value("data", "");
+    p.senderID = j.value("senderID", "");
+    p.signature = j.value("signature", 0ULL);
+    p.destinationID = j.value("destinationID", -1);
+    p.originNodeID = j.value("originNodeID", -1);
+    p.lastHopNodeID = j.value("lastHopNodeID", -1);
+    p.lastForwardedAtMs = j.value("lastForwardedAtMs", static_cast<int64_t>(0));
+}
 
 /**
  * @class PriorityEngine
- * @brief A max-heap priority queue for DataPackets (highest urgency popped first).
+ * @brief A max-heap priority queue for DataPackets.
  */
 class PriorityEngine {
 private:
-    priority_queue<DataPacket> pq;
+    std::priority_queue<DataPacket> pq;
+
 public:
-    void push(const DataPacket &p);
-    optional<DataPacket> pop();
+    void push(const DataPacket& p);
+    std::optional<DataPacket> pop();
     bool empty() const;
     size_t size() const;
+    void clear();
 };
