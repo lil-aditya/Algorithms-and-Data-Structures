@@ -60,12 +60,19 @@ void Node::logMessage(const std::string& msg) {
 void Node::runServer() {
     
     // --- CORS Headers for Web Frontend ---
-    svr.Options(R"(.*)", [](const httplib::Request& /*req*/, httplib::Response& res) {
+    auto cors_handler = [](const httplib::Request& /*req*/, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.set_header("Access-Control-Allow-Headers", "*");
         res.status = 204; // No Content
-    });
+    };
+
+    // Explicitly add OPTIONS for every endpoint (since regex is disabled by default)
+    svr.Options("/inject", cors_handler);
+    svr.Options("/packets", cors_handler);
+    svr.Options("/status", cors_handler);
+    svr.Options("/log", cors_handler);
+    svr.Options("/check", cors_handler);
 
     svr.set_post_routing_handler([](const httplib::Request& /*req*/, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
