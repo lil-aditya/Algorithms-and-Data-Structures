@@ -59,6 +59,18 @@ void Node::logMessage(const std::string& msg) {
 // ===========================================================================
 void Node::runServer() {
     
+    // --- CORS Headers for Web Frontend ---
+    svr.Options(R"(.*)", [](const httplib::Request& /*req*/, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.status = 204; // No Content
+    });
+
+    svr.set_post_routing_handler([](const httplib::Request& /*req*/, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+    });
+
     // --- Endpoint 1: Node-to-Node communication ---
     // Used when another node forwards a packet to this node.
     svr.Post("/packet", [this](const httplib::Request& req, httplib::Response& res) {
