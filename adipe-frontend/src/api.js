@@ -57,6 +57,18 @@ export const checkAllNodes = async () => {
 };
 
 export const injectPacket = async (packetData) => {
-    const { data } = await api.post('/inject', packetData);
-    return data;
+    try {
+        const { data } = await api.post('/inject', packetData);
+        return data;
+    } catch (err) {
+        if (err.response) {
+            throw new Error(`Injection failed with HTTP ${err.response.status}.`);
+        }
+
+        if (err.code === 'ECONNABORTED') {
+            throw new Error('Injection timed out while waiting for the C++ engine.');
+        }
+
+        throw new Error('Cannot reach the C++ engine at http://127.0.0.1:8080.');
+    }
 };

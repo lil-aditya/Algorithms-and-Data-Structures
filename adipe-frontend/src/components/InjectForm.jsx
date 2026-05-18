@@ -30,7 +30,7 @@ const InjectForm = ({ onInject }) => {
             setSuccess(true);
             setTimeout(() => setSuccess(false), 2500);
         } catch (err) {
-            setError('Injection failed — is the C++ engine running?');
+            setError(err.message || 'Injection failed.');
             setTimeout(() => setError(''), 4000);
         } finally {
             setLoading(false);
@@ -99,12 +99,13 @@ const InjectForm = ({ onInject }) => {
                     <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">
                         Urgency
                         <span className="mono ml-2 font-bold" style={{ color: urgencyColor }}>
-                            {urgency} — {urgencyLabel}
+                            {urgency} - {urgencyLabel}
                         </span>
                     </label>
                     <input
                         type="range"
-                        min={1} max={50}
+                        min={1}
+                        max={50}
                         value={urgency}
                         onChange={(e) => setUrgency(parseInt(e.target.value))}
                         className="w-full mt-2"
@@ -142,7 +143,7 @@ const InjectForm = ({ onInject }) => {
                         </svg>
                         Injecting...
                     </span>
-                ) : 'Inject into Network →'}
+                ) : 'Inject into Network ->'}
             </motion.button>
 
             {/* Feedback messages */}
@@ -152,7 +153,7 @@ const InjectForm = ({ onInject }) => {
                     animate={{ opacity: 1, y: 0 }}
                     className="mt-3 text-center text-xs font-semibold text-emerald-400"
                 >
-                    ✓ Packet injected successfully
+                    Packet injected successfully
                 </motion.div>
             )}
             {error && (
