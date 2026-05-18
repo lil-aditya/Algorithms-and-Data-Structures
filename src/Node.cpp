@@ -1,313 +1,778 @@
 #include "Node.hpp"
-#include <chrono> // For std::this_thread::sleep_for
 
-// --- Define the static (global) log members ---
-// These are shared by all Node objects
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <cmath>
+#include <sstream>
+
+namespace {
+constexpr int kMonitorIntervalMs = 1000;
+constexpr int kChaosDelayMs = 1600;
+constexpr int kHighLatencyThresholdMs = 1200;
+
+float clampTrust(float value) {
+    return std::max(0.0f, std::min(1.0f, value));
+}
+} // namespace
+
 std::vector<std::string> Node::sharedLog;
 std::mutex Node::logMutex;
+std::map<int, Node*> Node::registry;
+std::mutex Node::registryMutex;
+int Node::leaderNodeID = -1;
+std::mutex Node::leaderMutex;
 
-// --- Constructor ---
-// Initializes the node's state
 Node::Node(int id, Graph& graph, MetadataMap& book, PacketStore& store)
-    : nodeID(id), networkMap(graph), addressBook(book), packetStore(store), running(true) {
-    
-    // Each node generates its own unique identity (keys)
-    nodeKeys = generateKeys(id);
-    
-    // Add this node's *public* keys to the global address book
-    // so other nodes can verify its packets in the future.
-    std::string id_str = std::to_string(nodeID);
-    addressBook.insert(id_str + "_pub_e", std::to_string(nodeKeys.e));
-    addressBook.insert(id_str + "_pub_n", std::to_string(nodeKeys.n));
+    : nodeID(id),
+      nodeKeys(generateKeys(id)),
+      networkMap(graph),
+      addressBook(book),
+      packetStore(store),
+      trustScores(store.getTrustVector(id, kNodeCount)),
+      chaosMode(ChaosMode::NORMAL),
+      lastObservedLeaderID(-1),
+      running(true) {
+    if (trustScores.size() != kNodeCount) {
+        trustScores.assign(kNodeCount, 1.0f);
+    }
+    trustScores[nodeID] = 1.0f;
+
+    const std::string idStr = std::to_string(nodeID);
+    addressBook.insert(idStr + "_pub_e", std::to_string(nodeKeys.e));
+    addressBook.insert(idStr + "_pub_n", std::to_string(nodeKeys.n));
+
+    for (int i = 0; i < kNodeCount; ++i) {
+        packetStore.upsertTrustScore(nodeID, i, trustScores[i]);
+    }
+
+    std::lock_guard<std::mutex> guard(registryMutex);
+    registry[nodeID] = this;
 }
 
-// --- Destructor ---
-// Gracefully shuts down the node
 Node::~Node() {
-    running = false; // Signal threads to stop
-    svr.stop();      // Stop the HTTP server
-    
-    // Wait for threads to finish their current loop
-    if (serverThread.joinable()) serverThread.join();
-    if (workerThread.joinable()) workerThread.join();
+    running = false;
+    svr.stop();
+
+    if (serverThread.joinable()) {
+        serverThread.join();
+    }
+    if (workerThread.joinable()) {
+        workerThread.join();
+    }
+    if (monitorThread.joinable()) {
+        monitorThread.join();
+    }
+
+    std::lock_guard<std::mutex> guard(registryMutex);
+    registry.erase(nodeID);
 }
 
-// --- Start ---
-// Launches the node's two main threads
 void Node::start() {
     logMessage("[Node " + std::to_string(nodeID) + "] Starting...");
-    // Launch the server thread (to listen) and the worker thread (to process)
     serverThread = std::thread(&Node::runServer, this);
     workerThread = std::thread(&Node::runWorker, this);
+    monitorThread = std::thread(&Node::runMonitor, this);
 }
 
-// --- logMessage ---
-// A thread-safe way to log to both console and the shared UI log
 void Node::logMessage(const std::string& msg) {
-    // Lock the mutex to prevent multiple threads from writing at the same time
     std::lock_guard<std::mutex> guard(logMutex);
-    
-    // Print to the C++ console
-    std::cout << msg << std::endl; 
-    
-    // Add to the shared log for the dashboard/API to fetch
+    std::cout << msg << std::endl;
     sharedLog.push_back(msg);
 }
 
-// ===========================================================================
-// Thread 1: The Server (Listens for packets)  —  "Producer"
-// ===========================================================================
+int64_t Node::nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+std::string Node::chaosModeToString(ChaosMode mode) {
+    switch (mode) {
+        case ChaosMode::NORMAL: return "NORMAL";
+        case ChaosMode::TAMPER: return "TAMPER";
+        case ChaosMode::SILENT_DROP: return "SILENT_DROP";
+        case ChaosMode::DELAY: return "DELAY";
+        case ChaosMode::FORGE: return "FORGE";
+        case ChaosMode::EAVESDROP: return "EAVESDROP";
+    }
+    return "NORMAL";
+}
+
+bool Node::parseChaosMode(const std::string& raw, ChaosMode& mode) {
+    std::string upper;
+    upper.reserve(raw.size());
+    for (char ch : raw) {
+        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+    }
+
+    if (upper == "NORMAL") {
+        mode = ChaosMode::NORMAL;
+        return true;
+    }
+    if (upper == "TAMPER") {
+        mode = ChaosMode::TAMPER;
+        return true;
+    }
+    if (upper == "SILENT_DROP") {
+        mode = ChaosMode::SILENT_DROP;
+        return true;
+    }
+    if (upper == "DELAY") {
+        mode = ChaosMode::DELAY;
+        return true;
+    }
+    if (upper == "FORGE") {
+        mode = ChaosMode::FORGE;
+        return true;
+    }
+    if (upper == "EAVESDROP") {
+        mode = ChaosMode::EAVESDROP;
+        return true;
+    }
+
+    return false;
+}
+
+ChaosMode Node::getChaosMode() const {
+    std::lock_guard<std::mutex> guard(chaosMutex);
+    return chaosMode;
+}
+
+void Node::setChaosMode(ChaosMode mode) {
+    {
+        std::lock_guard<std::mutex> guard(chaosMutex);
+        chaosMode = mode;
+    }
+
+    float selfTrust = 1.0f;
+    if (mode == ChaosMode::TAMPER || mode == ChaosMode::FORGE || mode == ChaosMode::SILENT_DROP) {
+        selfTrust = 0.05f;
+    } else if (mode == ChaosMode::DELAY) {
+        selfTrust = 0.45f;
+    } else if (mode == ChaosMode::EAVESDROP) {
+        selfTrust = 0.75f;
+    }
+
+    setTrustScore(nodeID, selfTrust,
+        "Self-health updated after chaos mode change to " + chaosModeToString(mode));
+    logMessage("[Node " + std::to_string(nodeID) + "] Chaos mode set to " + chaosModeToString(mode));
+    refreshLeader("chaos mode change on node " + std::to_string(nodeID));
+}
+
+void Node::adjustTrust(int subjectNode, float delta, const std::string& reason) {
+    if (subjectNode < 0 || subjectNode >= kNodeCount) {
+        return;
+    }
+
+    float previous = 1.0f;
+    float updated = 1.0f;
+    {
+        std::lock_guard<std::mutex> guard(trustMutex);
+        previous = trustScores[subjectNode];
+        updated = clampTrust(previous + delta);
+        trustScores[subjectNode] = updated;
+    }
+
+    packetStore.upsertTrustScore(nodeID, subjectNode, updated);
+
+    if (std::fabs(updated - previous) >= 0.01f) {
+        std::ostringstream oss;
+        oss << "[Node " << nodeID << "] Trust[" << subjectNode << "] "
+            << previous << " -> " << updated << " (" << reason << ")";
+        logMessage(oss.str());
+    }
+}
+
+void Node::setTrustScore(int subjectNode, float value, const std::string& reason) {
+    if (subjectNode < 0 || subjectNode >= kNodeCount) {
+        return;
+    }
+
+    float previous = 1.0f;
+    float updated = clampTrust(value);
+    {
+        std::lock_guard<std::mutex> guard(trustMutex);
+        previous = trustScores[subjectNode];
+        trustScores[subjectNode] = updated;
+    }
+
+    packetStore.upsertTrustScore(nodeID, subjectNode, updated);
+
+    if (std::fabs(updated - previous) >= 0.01f) {
+        std::ostringstream oss;
+        oss << "[Node " << nodeID << "] Trust[" << subjectNode << "] forced to "
+            << updated << " (" << reason << ")";
+        logMessage(oss.str());
+    }
+}
+
+std::vector<float> Node::getLocalTrustSnapshot() const {
+    std::lock_guard<std::mutex> guard(trustMutex);
+    return trustScores;
+}
+
+std::vector<float> Node::getBroadcastTrustVector() const {
+    std::vector<float> aggregated(kNodeCount, 1.0f);
+    std::vector<bool> seen(kNodeCount, false);
+
+    std::lock_guard<std::mutex> guard(registryMutex);
+    for (const auto& [id, node] : registry) {
+        (void)id;
+        const std::vector<float> local = node->getLocalTrustSnapshot();
+        for (int subject = 0; subject < kNodeCount && subject < static_cast<int>(local.size()); ++subject) {
+            if (!seen[subject]) {
+                aggregated[subject] = local[subject];
+                seen[subject] = true;
+            } else {
+                aggregated[subject] = std::min(aggregated[subject], local[subject]);
+            }
+        }
+    }
+
+    for (int i = 0; i < kNodeCount; ++i) {
+        if (!seen[i]) {
+            aggregated[i] = 1.0f;
+        }
+    }
+
+    return aggregated;
+}
+
+float Node::getAggregatedTrustForNode(int subjectNode) const {
+    if (subjectNode < 0 || subjectNode >= kNodeCount) {
+        return 0.0f;
+    }
+
+    const std::vector<float> aggregated = getBroadcastTrustVector();
+    return aggregated[subjectNode];
+}
+
+bool Node::isLeadershipEligible() const {
+    const ChaosMode mode = getChaosMode();
+    if (mode == ChaosMode::TAMPER || mode == ChaosMode::FORGE || mode == ChaosMode::SILENT_DROP) {
+        return false;
+    }
+
+    const std::vector<float> local = getLocalTrustSnapshot();
+    return nodeID < static_cast<int>(local.size()) && local[nodeID] >= kQuarantineThreshold;
+}
+
+int Node::computeLeaderCandidate() {
+    std::lock_guard<std::mutex> guard(registryMutex);
+    int candidate = -1;
+    for (const auto& [id, node] : registry) {
+        if (node->isLeadershipEligible()) {
+            candidate = std::max(candidate, id);
+        }
+    }
+
+    if (candidate != -1) {
+        return candidate;
+    }
+
+    for (const auto& [id, node] : registry) {
+        (void)node;
+        candidate = std::max(candidate, id);
+    }
+
+    return candidate;
+}
+
+void Node::refreshLeader(const std::string& reason) {
+    const int candidate = computeLeaderCandidate();
+    int previous = -1;
+
+    {
+        std::lock_guard<std::mutex> guard(leaderMutex);
+        previous = leaderNodeID;
+        leaderNodeID = candidate;
+    }
+
+    if (candidate != previous && candidate != -1) {
+        logMessage("[Leader Election] Leader is now Node " + std::to_string(candidate) +
+                   (reason.empty() ? "" : " (" + reason + ")"));
+    }
+}
+
+bool Node::isProbePacket(const DataPacket& packet) const {
+    return packet.data.rfind("PROBE", 0) == 0 || packet.data.find("HEALTH_PING") != std::string::npos;
+}
+
+std::string Node::formatPath(const std::vector<int>& path) {
+    std::ostringstream oss;
+    for (size_t i = 0; i < path.size(); ++i) {
+        if (i > 0) {
+            oss << "->";
+        }
+        oss << path[i];
+    }
+    return oss.str();
+}
+
+void Node::applyChaosToPacket(DataPacket& packet) {
+    const ChaosMode mode = getChaosMode();
+
+    if (mode == ChaosMode::DELAY) {
+        logMessage("[Node " + std::to_string(nodeID) + "] Chaos DELAY: holding packet " + packet.id);
+        std::this_thread::sleep_for(std::chrono::milliseconds(kChaosDelayMs));
+        return;
+    }
+
+    if (mode == ChaosMode::TAMPER) {
+        packet.data += "::TAMPERED_BY_NODE_" + std::to_string(nodeID);
+        logMessage("[Node " + std::to_string(nodeID) + "] Chaos TAMPER: mutated packet " + packet.id);
+        return;
+    }
+
+    if (mode == ChaosMode::FORGE) {
+        packet.senderID = std::to_string(nodeID);
+        packet.signature = signData(packet.data, nodeKeys);
+        logMessage("[Node " + std::to_string(nodeID) + "] Chaos FORGE: re-signed packet " + packet.id +
+                   " as sender " + packet.senderID);
+    }
+}
+
+json Node::buildNetworkSnapshot() const {
+    const std::vector<float> localTrust = getLocalTrustSnapshot();
+    const std::vector<float> aggregatedTrust = getBroadcastTrustVector();
+
+    int currentLeader = -1;
+    {
+        std::lock_guard<std::mutex> guard(leaderMutex);
+        currentLeader = leaderNodeID;
+    }
+
+    json nodes = json::array();
+    json trustMatrix = json::array();
+
+    std::lock_guard<std::mutex> guard(registryMutex);
+    for (int i = 0; i < kNodeCount; ++i) {
+        auto it = registry.find(i);
+        const bool online = it != registry.end();
+        std::string mode = "OFFLINE";
+        if (online) {
+            mode = chaosModeToString(it->second->getChaosMode());
+        }
+
+        nodes.push_back({
+            {"id", i},
+            {"port", NODE_PORTS.at(i)},
+            {"online", online},
+            {"mode", mode},
+            {"leader", i == currentLeader},
+            {"trust", aggregatedTrust[i]},
+            {"quarantined", aggregatedTrust[i] < kQuarantineThreshold}
+        });
+    }
+
+    for (const auto& [observer, node] : registry) {
+        trustMatrix.push_back({
+            {"observerNode", observer},
+            {"scores", node->getLocalTrustSnapshot()}
+        });
+    }
+
+    return json{
+        {"nodeID", nodeID},
+        {"leaderID", currentLeader},
+        {"leaderPort", currentLeader >= 0 ? NODE_PORTS.at(currentLeader) : -1},
+        {"localTrust", localTrust},
+        {"aggregatedTrust", aggregatedTrust},
+        {"quarantineThreshold", kQuarantineThreshold},
+        {"nodes", nodes},
+        {"trustMatrix", trustMatrix}
+    };
+}
+
+void Node::resetRuntimeState(bool clearPacketHistory) {
+    {
+        std::lock_guard<std::mutex> guard(chaosMutex);
+        chaosMode = ChaosMode::NORMAL;
+    }
+
+    {
+        std::lock_guard<std::mutex> guard(trustMutex);
+        trustScores.assign(kNodeCount, 1.0f);
+    }
+
+    {
+        std::lock_guard<std::mutex> guard(inboxMutex);
+        inbox.clear();
+    }
+
+    for (int i = 0; i < kNodeCount; ++i) {
+        packetStore.upsertTrustScore(nodeID, i, 1.0f);
+    }
+
+    if (clearPacketHistory) {
+        packetStore.clearAllState();
+    }
+}
+
 void Node::runServer() {
-    // Apply one consistent CORS policy to every response so the React
-    // dashboard can poll and preflight cleanly from a different localhost port.
     svr.set_default_headers({
         {"Access-Control-Allow-Origin", "*"},
         {"Access-Control-Allow-Methods", "GET, POST, OPTIONS"},
         {"Access-Control-Allow-Headers", "Content-Type"}
     });
 
-    auto cors_handler = [](const httplib::Request& /*req*/, httplib::Response& res) {
-        res.status = 204; // No Content
+    auto corsHandler = [](const httplib::Request&, httplib::Response& res) {
+        res.status = 204;
     };
 
-    // Explicitly add OPTIONS for every endpoint (since regex is disabled by default)
-    svr.Options("/inject", cors_handler);
-    svr.Options("/packet", cors_handler);
-    svr.Options("/packets", cors_handler);
-    svr.Options("/status", cors_handler);
-    svr.Options("/log", cors_handler);
-    svr.Options("/check", cors_handler);
+    svr.Options("/inject", corsHandler);
+    svr.Options("/packet", corsHandler);
+    svr.Options("/packets", corsHandler);
+    svr.Options("/status", corsHandler);
+    svr.Options("/log", corsHandler);
+    svr.Options("/check", corsHandler);
+    svr.Options("/chaos", corsHandler);
+    svr.Options("/network", corsHandler);
+    svr.Options("/leader", corsHandler);
+    svr.Options("/reset", corsHandler);
 
-    // --- Endpoint 1: Node-to-Node communication ---
-    // Used when another node forwards a packet to this node.
     svr.Post("/packet", [this](const httplib::Request& req, httplib::Response& res) {
         try {
-            DataPacket p = json::parse(req.body);
-            
-            // Track: packet RECEIVED at this intermediate node
-            packetStore.updateStatus(p.id, "RECEIVED", nodeID,
+            DataPacket packet = json::parse(req.body);
+
+            if (packet.originNodeID < 0 && !packet.senderID.empty()) {
+                packet.originNodeID = std::stoi(packet.senderID);
+            }
+
+            if (packet.lastHopNodeID >= 0 && packet.lastHopNodeID != nodeID && packet.lastForwardedAtMs > 0) {
+                const int64_t latencyMs = nowMs() - packet.lastForwardedAtMs;
+                if (latencyMs > kHighLatencyThresholdMs) {
+                    adjustTrust(packet.lastHopNodeID, -0.20f,
+                        "High hop latency of " + std::to_string(latencyMs) + "ms");
+                } else if (isProbePacket(packet)) {
+                    adjustTrust(packet.lastHopNodeID, 0.05f,
+                        "Probe packet arrived from Node " + std::to_string(packet.lastHopNodeID));
+                } else {
+                    adjustTrust(packet.lastHopNodeID, 0.02f,
+                        "Healthy hop from Node " + std::to_string(packet.lastHopNodeID));
+                }
+            }
+
+            packetStore.updateStatus(packet.id, "RECEIVED", nodeID,
                 "Received from forwarding node");
 
             {
                 std::lock_guard<std::mutex> guard(inboxMutex);
-                inbox.push(p);
+                inbox.push(packet);
             }
 
-            // Track: packet QUEUED in this node's priority inbox
-            packetStore.updateStatus(p.id, "QUEUED", nodeID,
-                "Queued with urgency " + std::to_string(p.urgency));
-            
-            logMessage("[Node " + std::to_string(nodeID) + "] Received packet " + p.id + " from sender " + p.senderID);
+            packetStore.updateStatus(packet.id, "QUEUED", nodeID,
+                "Queued with urgency " + std::to_string(packet.urgency));
+
+            logMessage("[Node " + std::to_string(nodeID) + "] Received packet " + packet.id +
+                       " from sender " + packet.senderID);
             res.set_content("{\"status\": \"ACK\"}", "application/json");
-        
-        } catch (json::parse_error& e) {
+        } catch (const std::exception&) {
             logMessage("[Node " + std::to_string(nodeID) + "] Received invalid JSON. Discarding.");
             res.set_content("{\"error\": \"Invalid JSON\"}", 400, "application/json");
         }
     });
 
-    // --- Endpoint 2: External Packet Injection ---
-    // Used by external clients (curl, frontend) to inject
-    // a *new* packet into the network starting at this node.
     svr.Post("/inject", [this](const httplib::Request& req, httplib::Response& res) {
         try {
-            DataPacket p = json::parse(req.body);
+            DataPacket packet = json::parse(req.body);
+
             logMessage("[Node " + std::to_string(nodeID) + "] === INJECTION RECEIVED ===");
-            logMessage("[Node " + std::to_string(nodeID) + "] New packet " + p.id + " for destination " + std::to_string(p.destinationID));
+            logMessage("[Node " + std::to_string(nodeID) + "] New packet " + packet.id +
+                       " for destination " + std::to_string(packet.destinationID));
 
-            // Track: initialize the packet's lifecycle record
-            packetStore.initPacket(p.id, nodeID, p.destinationID, p.urgency);
+            packetStore.initPacket(packet.id, nodeID, packet.destinationID, packet.urgency);
 
-            // Sign the packet with this node's private key
-            p.senderID = std::to_string(nodeID);
-            p.signature = signData(p.data, nodeKeys);
-            logMessage("[Node " + std::to_string(nodeID) + "] Packet signed by node " + p.senderID + " with signature: " + std::to_string(p.signature));
+            packet.senderID = std::to_string(nodeID);
+            packet.originNodeID = nodeID;
+            packet.lastHopNodeID = nodeID;
+            packet.lastForwardedAtMs = nowMs();
+            packet.signature = signData(packet.data, nodeKeys);
 
-            // Track: SIGNED
-            packetStore.updateStatus(p.id, "SIGNED", nodeID,
-                "signature: " + std::to_string(p.signature));
+            logMessage("[Node " + std::to_string(nodeID) + "] Packet signed by node " +
+                       packet.senderID + " with signature: " + std::to_string(packet.signature));
 
-            // Push to our *own* inbox to start the journey
+            packetStore.updateStatus(packet.id, "SIGNED", nodeID,
+                "signature: " + std::to_string(packet.signature));
+
             {
                 std::lock_guard<std::mutex> guard(inboxMutex);
-                inbox.push(p);
+                inbox.push(packet);
             }
 
-            // Track: QUEUED
-            packetStore.updateStatus(p.id, "QUEUED", nodeID,
-                "Queued with urgency " + std::to_string(p.urgency));
+            packetStore.updateStatus(packet.id, "QUEUED", nodeID,
+                "Queued with urgency " + std::to_string(packet.urgency));
 
             res.set_content("{\"status\": \"Packet Signed and Injected\"}", "application/json");
-        
-        } catch (json::parse_error& e) {
+        } catch (const std::exception&) {
             logMessage("[Node " + std::to_string(nodeID) + "] Received invalid JSON from UI. Discarding.");
             res.set_content("{\"error\": \"Invalid JSON\"}", 400, "application/json");
         }
     });
 
-    // --- Endpoint 3: Log Retrieval ---
-    // Returns the shared log for dashboard or debugging
-    svr.Get("/log", [this](const httplib::Request& /*req*/, httplib::Response& res) {
-        json j;
+    svr.Get("/log", [this](const httplib::Request&, httplib::Response& res) {
+        json payload;
         {
             std::lock_guard<std::mutex> guard(logMutex);
-            j = sharedLog; 
+            payload = sharedLog;
         }
-        res.set_content(j.dump(), "application/json");
-    });
-    
-    // --- Endpoint 4: Health Check ---
-    // External clients call this to verify the node is online
-    svr.Get("/check", [](const httplib::Request& /*req*/, httplib::Response& res) {
-        res.set_content("{\"status\": \"ONLINE\"}", "application/json");
+        res.set_content(payload.dump(), "application/json");
     });
 
-    // --- Endpoint 5: Single Packet Status Query ---
-    // GET /status?id=pkt_001 → returns full lifecycle of that packet
+    svr.Get("/check", [this](const httplib::Request&, httplib::Response& res) {
+        json payload = {
+            {"status", "ONLINE"},
+            {"nodeID", nodeID},
+            {"mode", chaosModeToString(getChaosMode())}
+        };
+        res.set_content(payload.dump(), "application/json");
+    });
+
     svr.Get("/status", [this](const httplib::Request& req, httplib::Response& res) {
-        std::string packetID = req.get_param_value("id");
+        const std::string packetID = req.get_param_value("id");
         if (packetID.empty()) {
-            res.set_content("{\"error\": \"Missing 'id' query parameter. Use /status?id=pkt_001\"}", 400, "application/json");
+            res.set_content("{\"error\": \"Missing 'id' query parameter. Use /status?id=pkt_001\"}",
+                            400, "application/json");
             return;
         }
-        json result = packetStore.getPacket(packetID);
-        res.set_content(result.dump(2), "application/json");
+        res.set_content(packetStore.getPacket(packetID).dump(2), "application/json");
     });
 
-    // --- Endpoint 6: All Packets Dashboard ---
-    // GET /packets → returns all tracked packets and their current statuses
-    svr.Get("/packets", [this](const httplib::Request& /*req*/, httplib::Response& res) {
-        json result = packetStore.getAllPackets();
-        res.set_content(result.dump(2), "application/json");
+    svr.Get("/packets", [this](const httplib::Request&, httplib::Response& res) {
+        res.set_content(packetStore.getAllPackets().dump(2), "application/json");
     });
 
-    // Start the server on its unique port
-    logMessage("[Node " + std::to_string(nodeID) + "] Server listening on port " + std::to_string(NODE_PORTS.at(nodeID)));
-    if (!svr.listen("0.0.0.0", NODE_PORTS.at(nodeID))) {
-         logMessage("[Node " + std::to_string(nodeID) + "] FAILED to bind to port " + std::to_string(NODE_PORTS.at(nodeID)));
-    }
-}
+    svr.Get("/network", [this](const httplib::Request&, httplib::Response& res) {
+        refreshLeader("network snapshot requested");
+        res.set_content(buildNetworkSnapshot().dump(2), "application/json");
+    });
 
-// ===========================================================================
-// Thread 2: The Worker (Processes inbox)  —  "Consumer"
-// ===========================================================================
-void Node::runWorker() {
-    while (running) {
-        std::optional<DataPacket> p_opt;
-
-        // --- Critical Section: Check Inbox ---
+    svr.Get("/leader", [this](const httplib::Request&, httplib::Response& res) {
+        refreshLeader("leader endpoint requested");
+        int currentLeader = -1;
         {
-            std::lock_guard<std::mutex> guard(inboxMutex);
-            if (!inbox.empty()) {
-                p_opt = inbox.pop();
+            std::lock_guard<std::mutex> guard(leaderMutex);
+            currentLeader = leaderNodeID;
+        }
+        const json payload = {
+            {"leaderID", currentLeader},
+            {"leaderPort", currentLeader >= 0 ? NODE_PORTS.at(currentLeader) : -1}
+        };
+        res.set_content(payload.dump(), "application/json");
+    });
+
+    svr.Post("/chaos", [this](const httplib::Request& req, httplib::Response& res) {
+        const std::string modeParam = req.get_param_value("mode");
+        ChaosMode mode;
+        if (!parseChaosMode(modeParam, mode)) {
+            res.set_content("{\"error\": \"Invalid mode. Use NORMAL, TAMPER, SILENT_DROP, DELAY, FORGE, or EAVESDROP.\"}",
+                            400, "application/json");
+            return;
+        }
+
+        setChaosMode(mode);
+        res.set_content(buildNetworkSnapshot().dump(2), "application/json");
+    });
+
+    svr.Post("/reset", [this](const httplib::Request&, httplib::Response& res) {
+        std::vector<Node*> nodes;
+        {
+            std::lock_guard<std::mutex> guard(registryMutex);
+            for (const auto& [id, node] : registry) {
+                (void)id;
+                nodes.push_back(node);
             }
         }
 
-        if (p_opt) {
-            processPacket(*p_opt);
+        packetStore.clearAllState();
+        {
+            std::lock_guard<std::mutex> guard(logMutex);
+            sharedLog.clear();
+        }
+
+        for (Node* node : nodes) {
+            node->resetRuntimeState(false);
+        }
+
+        refreshLeader("manual reset");
+        logMessage("[Cluster] Runtime state reset from Node " + std::to_string(nodeID));
+        res.set_content(buildNetworkSnapshot().dump(2), "application/json");
+    });
+
+    logMessage("[Node " + std::to_string(nodeID) + "] Server listening on port " +
+               std::to_string(NODE_PORTS.at(nodeID)));
+    if (!svr.listen("0.0.0.0", NODE_PORTS.at(nodeID))) {
+        logMessage("[Node " + std::to_string(nodeID) + "] FAILED to bind to port " +
+                   std::to_string(NODE_PORTS.at(nodeID)));
+    }
+}
+
+void Node::runWorker() {
+    while (running) {
+        std::optional<DataPacket> packet;
+        {
+            std::lock_guard<std::mutex> guard(inboxMutex);
+            if (!inbox.empty()) {
+                packet = inbox.pop();
+            }
+        }
+
+        if (packet) {
+            processPacket(*packet);
         } else {
-            // No packets — sleep to avoid busy-waiting
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
 }
 
-// ===========================================================================
-// The Core AQoS Logic  —  verify, route, forward/deliver
-// ===========================================================================
+void Node::runMonitor() {
+    while (running) {
+        refreshLeader("monitor heartbeat");
+
+        int currentLeader = -1;
+        {
+            std::lock_guard<std::mutex> guard(leaderMutex);
+            currentLeader = leaderNodeID;
+        }
+
+        if (currentLeader != lastObservedLeaderID && currentLeader != -1) {
+            logMessage("[Node " + std::to_string(nodeID) + "] Observed leader Node " +
+                       std::to_string(currentLeader));
+            lastObservedLeaderID = currentLeader;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(kMonitorIntervalMs));
+    }
+}
+
 void Node::processPacket(DataPacket packet) {
     logMessage("[Node " + std::to_string(nodeID) + "] Processing packet " + packet.id);
-
-    // Track: PROCESSING
     packetStore.updateStatus(packet.id, "PROCESSING", nodeID,
         "Worker thread picked up packet");
 
-    // 1. LOOKUP sender's public key from the global address book
-    std::string e_key = packet.senderID + "_pub_e";
-    std::string n_key = packet.senderID + "_pub_n";
-    std::string e_str = addressBook.get(e_key);
-    std::string n_str = addressBook.get(n_key);
-
-    // Check if the key even exists
-    if (e_str.empty() || n_str.empty()) {
-        logMessage("[Node " + std::to_string(nodeID) + "] Signature FAILED. No public key for sender " + packet.senderID + ". DROPPING.");
+    if (getChaosMode() == ChaosMode::SILENT_DROP) {
+        logMessage("[Node " + std::to_string(nodeID) + "] Chaos SILENT_DROP: dropping packet " + packet.id);
         packetStore.updateStatus(packet.id, "DROPPED", nodeID,
-            "No public key found for sender " + packet.senderID);
+            "Chaos mode SILENT_DROP discarded packet at Node " + std::to_string(nodeID));
+        setTrustScore(nodeID, 0.05f, "Silent drop mode active");
         return;
     }
-    
-    // Convert keys from string back to numbers
+
+    if (getChaosMode() == ChaosMode::EAVESDROP) {
+        logMessage("[Node " + std::to_string(nodeID) + "] Chaos EAVESDROP observed payload: " + packet.data);
+    }
+
+    if (packet.originNodeID >= 0 && packet.senderID != std::to_string(packet.originNodeID)) {
+        const int suspect = packet.lastHopNodeID >= 0 ? packet.lastHopNodeID : nodeID;
+        logMessage("[Node " + std::to_string(nodeID) + "] Forged sender identity detected on packet " + packet.id);
+        packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+            "Forged sender detected: origin Node " + std::to_string(packet.originNodeID) +
+            ", claimed signer Node " + packet.senderID);
+        setTrustScore(suspect, 0.05f, "Detected forged sender identity");
+        return;
+    }
+
+    const std::string eKey = packet.senderID + "_pub_e";
+    const std::string nKey = packet.senderID + "_pub_n";
+    const std::string eStr = addressBook.get(eKey);
+    const std::string nStr = addressBook.get(nKey);
+
+    if (eStr.empty() || nStr.empty()) {
+        const int suspect = packet.lastHopNodeID >= 0 ? packet.lastHopNodeID : nodeID;
+        logMessage("[Node " + std::to_string(nodeID) + "] Signature FAILED. No public key for sender " +
+                   packet.senderID + ". DROPPING.");
+        packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+            "No public key found for sender " + packet.senderID);
+        setTrustScore(suspect, 0.05f, "Forwarded packet with unknown public key");
+        return;
+    }
+
     Keys senderPubKey;
     try {
-        senderPubKey.e = std::stoull(e_str);
-        senderPubKey.n = std::stoull(n_str);
-    } catch (const std::exception& e) {
+        senderPubKey.e = std::stoull(eStr);
+        senderPubKey.n = std::stoull(nStr);
+    } catch (const std::exception&) {
+        const int suspect = packet.lastHopNodeID >= 0 ? packet.lastHopNodeID : nodeID;
         logMessage("[Node " + std::to_string(nodeID) + "] Signature FAILED. Invalid key format. DROPPING.");
         packetStore.updateStatus(packet.id, "DROPPED", nodeID,
             "Invalid key format in address book");
+        setTrustScore(suspect, 0.05f, "Forwarded packet with invalid key metadata");
         return;
     }
 
-    // 2. VERIFY signature (The "Authenticated" part)
-    bool isValid = verifySignature(packet.data, packet.signature, senderPubKey);
-
+    const bool isValid = verifySignature(packet.data, packet.signature, senderPubKey);
     if (!isValid) {
+        const int suspect = packet.lastHopNodeID >= 0 ? packet.lastHopNodeID : nodeID;
         logMessage("[Node " + std::to_string(nodeID) + "] Signature FAILED. Data/Signature mismatch. DROPPING.");
         packetStore.updateStatus(packet.id, "DROPPED", nodeID,
-            "Signature mismatch — data may be tampered");
+            "Signature mismatch - data may be tampered");
+        setTrustScore(suspect, 0.05f, "Detected signature mismatch");
         return;
     }
-    
-    // If we get here, the signature is valid
-    logMessage("[Node " + std::to_string(nodeID) + "] Signature VALID. Packet trusted.");
 
-    // Track: VERIFIED
+    logMessage("[Node " + std::to_string(nodeID) + "] Signature VALID. Packet trusted.");
     packetStore.updateStatus(packet.id, "VERIFIED", nodeID,
         "Signature verified against sender " + packet.senderID);
 
-    // 3. DECISION (Forward or Deliver)
     if (nodeID == packet.destinationID) {
-        // This is the final destination
         logMessage("[Node " + std::to_string(nodeID) + "] Packet DELIVERED to final destination.");
-
-        // Track: DELIVERED
         packetStore.updateStatus(packet.id, "DELIVERED", nodeID,
             "Packet reached destination Node " + std::to_string(nodeID));
-    
-    } else {
-        // This is an intermediate node — forward it
-        std::vector<int> path = networkMap.findShortestPath(nodeID, packet.destinationID);
-        
-        if (path.size() < 2) {
-            logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. No path to destination " + std::to_string(packet.destinationID) + ". DROPPING.");
-            packetStore.updateStatus(packet.id, "DROPPED", nodeID,
-                "No route to destination " + std::to_string(packet.destinationID));
-            return;
+
+        if (isProbePacket(packet) && packet.originNodeID >= 0) {
+            adjustTrust(packet.originNodeID, 0.08f, "Probe packet delivered successfully");
         }
-        
-        int nextHopID = path[1]; 
-        int nextHopPort = NODE_PORTS.at(nextHopID);
+        return;
+    }
 
-        logMessage("[Node " + std::to_string(nodeID) + "] Forwarding packet to next hop: Node " + std::to_string(nextHopID) + " (Port " + std::to_string(nextHopPort) + ")");
+    const std::vector<float> trustView = getBroadcastTrustVector();
+    const std::vector<int> path = networkMap.findTrustedPath(
+        nodeID, packet.destinationID, trustView, kQuarantineThreshold);
 
-        // Track: FORWARDED
-        packetStore.updateStatus(packet.id, "FORWARDED", nodeID,
-            "Node " + std::to_string(nodeID) + " -> Node " + std::to_string(nextHopID));
+    if (path.size() < 2) {
+        logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. No trusted path to destination " +
+                   std::to_string(packet.destinationID) + ". DROPPING.");
+        packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+            "No trusted route to destination " + std::to_string(packet.destinationID));
+        return;
+    }
 
-        // --- Send Packet to Next Node ---
-        httplib::Client cli("127.0.0.1", nextHopPort);
-        cli.set_connection_timeout(1); 
-        
-        if (auto res = cli.Post("/packet", json(packet).dump(), "application/json")) {
-            if (res->status != 200) {
-                logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. Node " + std::to_string(nextHopID) + " responded with error " + std::to_string(res->status));
-                packetStore.updateStatus(packet.id, "DROPPED", nodeID,
-                    "Next hop Node " + std::to_string(nextHopID) + " returned HTTP " + std::to_string(res->status));
-            }
+    const int nextHopID = path[1];
+    const int nextHopPort = NODE_PORTS.at(nextHopID);
+    logMessage("[Node " + std::to_string(nodeID) + "] Routed packet " + packet.id +
+               " via path " + formatPath(path));
+
+    packetStore.updateStatus(packet.id, "FORWARDED", nodeID,
+        "Node " + std::to_string(nodeID) + " -> Node " + std::to_string(nextHopID) +
+        " using path " + formatPath(path));
+
+    packet.lastHopNodeID = nodeID;
+    packet.lastForwardedAtMs = nowMs();
+    applyChaosToPacket(packet);
+
+    httplib::Client cli("127.0.0.1", nextHopPort);
+    cli.set_connection_timeout(1);
+
+    if (auto res = cli.Post("/packet", json(packet).dump(), "application/json")) {
+        if (res->status == 200) {
+            adjustTrust(nextHopID, isProbePacket(packet) ? 0.05f : 0.02f,
+                "Accepted forwarded packet " + packet.id);
         } else {
-            logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. Could not connect to Node " + std::to_string(nextHopID));
+            logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. Node " +
+                       std::to_string(nextHopID) + " responded with error " +
+                       std::to_string(res->status));
             packetStore.updateStatus(packet.id, "DROPPED", nodeID,
-                "Connection refused by Node " + std::to_string(nextHopID));
+                "Next hop Node " + std::to_string(nextHopID) +
+                " returned HTTP " + std::to_string(res->status));
+            adjustTrust(nextHopID, -0.40f,
+                "Returned HTTP " + std::to_string(res->status) + " for packet " + packet.id);
         }
+    } else {
+        logMessage("[Node " + std::to_string(nodeID) + "] Forwarding FAILED. Could not connect to Node " +
+                   std::to_string(nextHopID));
+        packetStore.updateStatus(packet.id, "DROPPED", nodeID,
+            "Connection refused by Node " + std::to_string(nextHopID));
+        adjustTrust(nextHopID, -0.50f,
+            "Connection failure while forwarding packet " + packet.id);
     }
 }
