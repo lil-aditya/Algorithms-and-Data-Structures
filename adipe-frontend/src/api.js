@@ -1,0 +1,62 @@
+import axios from 'axios';
+
+const API_BASE = 'http://127.0.0.1:8080';
+
+const api = axios.create({
+    baseURL: API_BASE,
+    timeout: 3000,
+});
+
+export const fetchPackets = async () => {
+    try {
+        const { data } = await api.get('/packets');
+        return data;
+    } catch (err) {
+        console.error('[ADIPE] Packet fetch failed:', err.message);
+        return [];
+    }
+};
+
+export const fetchPacketStatus = async (packetID) => {
+    try {
+        const { data } = await api.get('/status', { params: { id: packetID } });
+        return data;
+    } catch (err) {
+        console.error('[ADIPE] Status fetch failed:', err.message);
+        return null;
+    }
+};
+
+export const fetchNetworkLog = async () => {
+    try {
+        const { data } = await api.get('/log');
+        return data;
+    } catch (err) {
+        console.error('[ADIPE] Log fetch failed:', err.message);
+        return [];
+    }
+};
+
+export const fetchNodeHealth = async (port) => {
+    try {
+        const { data } = await axios.get(`http://127.0.0.1:${port}/check`, { timeout: 1500 });
+        return data.status === 'ONLINE';
+    } catch {
+        return false;
+    }
+};
+
+export const checkAllNodes = async () => {
+    const ports = [8080, 8081, 8082, 8083, 8084, 8085];
+    const results = await Promise.allSettled(
+        ports.map((port, idx) =>
+            fetchNodeHealth(port).then(online => ({ id: idx, port, online }))
+        )
+    );
+    return results.map(r => r.status === 'fulfilled' ? r.value : { id: 0, port: 0, online: false });
+};
+
+export const injectPacket = async (packetData) => {
+    const { data } = await api.post('/inject', packetData);
+    return data;
+};
