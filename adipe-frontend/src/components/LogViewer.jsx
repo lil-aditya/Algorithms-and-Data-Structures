@@ -28,6 +28,9 @@ const LogViewer = () => {
     const getLogColor = (line) => {
         if (line.includes('DELIVERED')) return '#10b981';
         if (line.includes('DROPPED') || line.includes('FAILED')) return '#f43f5e';
+        if (line.includes('Leader Election') || line.includes('Observed leader')) return '#fbbf24';
+        if (line.includes('Chaos')) return '#a855f7';
+        if (line.includes('Trust[')) return '#06b6d4';
         if (line.includes('INJECTION') || line.includes('Signed')) return '#8b5cf6';
         if (line.includes('VALID') || line.includes('Verified')) return '#06b6d4';
         if (line.includes('Forwarding') || line.includes('next hop')) return '#a855f7';
