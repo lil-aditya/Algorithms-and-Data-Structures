@@ -1,60 +1,107 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { fetchPackets, checkAllNodes, injectPacket } from './api';
-import Topology from './components/Topology';
-import PacketTracker from './components/PacketTracker';
+import React, { useEffect, useState } from 'react';
+import {
+    checkAllNodes,
+    fetchNetworkState,
+    fetchPackets,
+    injectPacket,
+    resetNetwork,
+    setChaosMode,
+} from './api';
+import ChaosControls from './components/ChaosControls';
 import InjectForm from './components/InjectForm';
 import LogViewer from './components/LogViewer';
+import PacketTracker from './components/PacketTracker';
 import StatsBar from './components/StatsBar';
+import Topology from './components/Topology';
+import TrustMatrix from './components/TrustMatrix';
 
 export default function App() {
     const [packets, setPackets] = useState([]);
     const [nodeHealth, setNodeHealth] = useState({});
+    const [networkState, setNetworkState] = useState(null);
     const [engineOnline, setEngineOnline] = useState(false);
+    const [busyNodeID, setBusyNodeID] = useState(null);
+    const [resetBusy, setResetBusy] = useState(false);
 
-    // Poll packets every 1.5s
     useEffect(() => {
-        const poll = async () => {
+        const pollPackets = async () => {
             const data = await fetchPackets();
             setPackets(data);
         };
-        poll(); // immediate first fetch
-        const interval = setInterval(poll, 1500);
+
+        pollPackets();
+        const interval = setInterval(pollPackets, 1500);
         return () => clearInterval(interval);
     }, []);
 
-    // Check node health every 4s
     useEffect(() => {
-        const check = async () => {
-            const results = await checkAllNodes();
+        const pollNetwork = async () => {
+            const [results, snapshot] = await Promise.all([
+                checkAllNodes(),
+                fetchNetworkState(),
+            ]);
+
             const health = {};
             let anyOnline = false;
-            results.forEach(r => {
-                health[r.id] = r.online;
-                if (r.online) anyOnline = true;
+            results.forEach((result) => {
+                health[result.id] = result.online;
+                if (result.online) {
+                    anyOnline = true;
+                }
             });
+
             setNodeHealth(health);
+            setNetworkState(snapshot);
             setEngineOnline(anyOnline);
         };
-        check();
-        const interval = setInterval(check, 4000);
+
+        pollNetwork();
+        const interval = setInterval(pollNetwork, 2500);
         return () => clearInterval(interval);
     }, []);
 
-    const handleInject = useCallback(async (packetData) => {
+    const refreshPacketsAndNetwork = async () => {
+        const [packetData, snapshot] = await Promise.all([
+            fetchPackets(),
+            fetchNetworkState(),
+        ]);
+        setPackets(packetData);
+        setNetworkState(snapshot);
+    };
+
+    const handleInject = async (packetData) => {
         await injectPacket(packetData);
-        // Immediate re-fetch for responsiveness
-        const data = await fetchPackets();
-        setPackets(data);
-    }, []);
+        await refreshPacketsAndNetwork();
+    };
+
+    const handleModeChange = async (nodeID, mode) => {
+        try {
+            setBusyNodeID(nodeID);
+            const snapshot = await setChaosMode(nodeID, mode);
+            setNetworkState(snapshot);
+            await refreshPacketsAndNetwork();
+        } finally {
+            setBusyNodeID(null);
+        }
+    };
+
+    const handleReset = async () => {
+        try {
+            setResetBusy(true);
+            const snapshot = await resetNetwork();
+            setNetworkState(snapshot);
+            await refreshPacketsAndNetwork();
+        } finally {
+            setResetBusy(false);
+        }
+    };
 
     return (
         <div className="min-h-screen flex flex-col pb-12">
-            {/* ===== Header ===== */}
             <header className="px-8 pt-8 pb-2">
-                <div className="max-w-[1400px] mx-auto flex items-center justify-between">
+                <div className="max-w-[1480px] mx-auto flex items-center justify-between">
                     <div>
                         <div className="flex items-center gap-3">
-                            {/* Logo mark */}
                             <div
                                 className="w-10 h-10 rounded-xl flex items-center justify-center"
                                 style={{
@@ -74,12 +121,12 @@ export default function App() {
                             </div>
                         </div>
                         <p className="text-xs text-slate-500 mt-1 ml-[52px]">
-                            Algorithmic Data Integrity & Prioritization Engine
+                            Autonomous adversarial network monitor with leader election and trust-aware routing
                         </p>
                     </div>
 
-                    {/* Connection Status */}
-                    <div className="flex items-center gap-2 px-4 py-2 rounded-xl"
+                    <div
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl"
                         style={{
                             background: engineOnline ? 'rgba(16,185,129,0.08)' : 'rgba(244,63,94,0.08)',
                             border: `1px solid ${engineOnline ? 'rgba(16,185,129,0.2)' : 'rgba(244,63,94,0.2)'}`,
@@ -100,41 +147,41 @@ export default function App() {
                 </div>
             </header>
 
-            {/* ===== Main Content ===== */}
             <main className="flex-1 px-8 py-6">
-                <div className="max-w-[1400px] mx-auto space-y-6">
+                <div className="max-w-[1480px] mx-auto space-y-6">
+                    <StatsBar packets={packets} nodeHealth={nodeHealth} networkState={networkState} />
 
-                    {/* Stats Bar */}
-                    <StatsBar packets={packets} nodeHealth={nodeHealth} />
-
-                    {/* Main Grid: Topology + Inject (left) | Packets (right) */}
-                    <div className="grid grid-cols-1 lg:grid-cols-5 gap-6" style={{ minHeight: 520 }}>
-                        {/* Left Column — 3/5 */}
+                    <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                         <div className="lg:col-span-3 flex flex-col gap-6">
-                            {/* Network Topology */}
                             <section>
                                 <div className="flex items-center gap-2 mb-3">
                                     <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                                     </svg>
-                                    <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Network Topology</h2>
+                                    <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Adaptive Network Topology</h2>
                                 </div>
-                                <Topology nodeHealth={nodeHealth} packets={packets} />
+                                <Topology nodeHealth={nodeHealth} packets={packets} networkState={networkState} />
                             </section>
 
-                            {/* Inject Form */}
                             <InjectForm onInject={handleInject} />
+                            <ChaosControls
+                                networkState={networkState}
+                                onModeChange={handleModeChange}
+                                onReset={handleReset}
+                                busyNodeID={busyNodeID}
+                                resetBusy={resetBusy}
+                            />
                         </div>
 
-                        {/* Right Column — 2/5 */}
-                        <div className="lg:col-span-2 flex flex-col" style={{ maxHeight: 650 }}>
+                        <div className="lg:col-span-2 flex flex-col" style={{ maxHeight: 880 }}>
                             <PacketTracker packets={packets} />
                         </div>
                     </div>
+
+                    <TrustMatrix networkState={networkState} />
                 </div>
             </main>
 
-            {/* ===== Bottom Log Panel ===== */}
             <LogViewer />
         </div>
     );
