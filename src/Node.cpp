@@ -58,25 +58,25 @@ void Node::logMessage(const std::string& msg) {
 // Thread 1: The Server (Listens for packets)  —  "Producer"
 // ===========================================================================
 void Node::runServer() {
-    
-    // --- CORS Headers for Web Frontend ---
+    // Apply one consistent CORS policy to every response so the React
+    // dashboard can poll and preflight cleanly from a different localhost port.
+    svr.set_default_headers({
+        {"Access-Control-Allow-Origin", "*"},
+        {"Access-Control-Allow-Methods", "GET, POST, OPTIONS"},
+        {"Access-Control-Allow-Headers", "Content-Type"}
+    });
+
     auto cors_handler = [](const httplib::Request& /*req*/, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
-        res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "*");
         res.status = 204; // No Content
     };
 
     // Explicitly add OPTIONS for every endpoint (since regex is disabled by default)
     svr.Options("/inject", cors_handler);
+    svr.Options("/packet", cors_handler);
     svr.Options("/packets", cors_handler);
     svr.Options("/status", cors_handler);
     svr.Options("/log", cors_handler);
     svr.Options("/check", cors_handler);
-
-    svr.set_post_routing_handler([](const httplib::Request& /*req*/, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
-    });
 
     // --- Endpoint 1: Node-to-Node communication ---
     // Used when another node forwards a packet to this node.
