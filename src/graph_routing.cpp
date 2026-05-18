@@ -1,42 +1,64 @@
-
 #include "graph_routing.hpp"
-#include <algorithm>
-using namespace std;
 
-Graph::Graph(int nodes): numNodes(nodes){}
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <iostream>
+#include <limits>
+
+Graph::Graph(int nodes) : numNodes(nodes) {}
 
 void Graph::addEdge(int u, int v) {
-    if (u<0 || u>=numNodes || v<0 || v>=numNodes) return;
+    if (u < 0 || u >= numNodes || v < 0 || v >= numNodes) {
+        return;
+    }
+
     adjList[u].push_back(v);
     adjList[v].push_back(u);
 }
 
-void Graph::BFS(int startNode){
-    if (startNode < 0 || startNode >= numNodes) return;
-    queue<int> q;
-    map<int,bool> vis;
+void Graph::BFS(int startNode) const {
+    if (startNode < 0 || startNode >= numNodes) {
+        return;
+    }
+
+    std::queue<int> q;
+    std::map<int, bool> visited;
     q.push(startNode);
-    vis[startNode] = true;
-    while(!q.empty()) {
-        int u=q.front(); q.pop();
-        cout<<u<<" ";
-        for (int v: adjList[u]) if(!vis[v]) { vis[v]=true; q.push(v); }
+    visited[startNode] = true;
+
+    while (!q.empty()) {
+        int u = q.front();
+        q.pop();
+        std::cout << u << " ";
+
+        auto it = adjList.find(u);
+        if (it == adjList.end()) {
+            continue;
+        }
+
+        for (int v : it->second) {
+            if (!visited[v]) {
+                visited[v] = true;
+                q.push(v);
+            }
+        }
     }
 }
 
-vector<int> Graph::findShortestPath(int startNode, int endNode) {
-    vector<int> path;
+std::vector<int> Graph::findShortestPath(int startNode, int endNode) const {
+    std::vector<int> path;
     if (startNode < 0 || startNode >= numNodes || endNode < 0 || endNode >= numNodes) {
-        return path; // Return empty path on invalid input
+        return path;
     }
 
-    queue<int> q;
-    map<int, bool> visited; // Tracks visited nodes
-    map<int, int> parent;   // Tracks the path: parent[child] = parent
+    std::queue<int> q;
+    std::map<int, bool> visited;
+    std::map<int, int> parent;
 
     q.push(startNode);
     visited[startNode] = true;
-    parent[startNode] = -1; // -1 indicates no parent (the start)
+    parent[startNode] = -1;
 
     bool found = false;
     while (!q.empty()) {
@@ -45,29 +67,100 @@ vector<int> Graph::findShortestPath(int startNode, int endNode) {
 
         if (u == endNode) {
             found = true;
-            break; // Found the destination
+            break;
         }
 
-        // Iterate over neighbors
-        for (int v : adjList[u]) {
+        auto it = adjList.find(u);
+        if (it == adjList.end()) {
+            continue;
+        }
+
+        for (int v : it->second) {
             if (!visited[v]) {
                 visited[v] = true;
-                parent[v] = u; // Set the parent
+                parent[v] = u;
                 q.push(v);
             }
         }
     }
 
-    // Now, backtrack from endNode to startNode to build the path
     if (found) {
         int current = endNode;
         while (current != -1) {
             path.push_back(current);
-            current = parent[current]; // Move to the parent
+            current = parent[current];
         }
-        // The path is currently [end, ..., start], so we must reverse it
-        reverse(path.begin(), path.end());
+        std::reverse(path.begin(), path.end());
     }
 
-    return path; // Returns [start, ..., end] or an empty vector if no path
+    return path;
+}
+
+std::vector<int> Graph::findTrustedPath(int startNode, int endNode,
+                                        const std::vector<float>& trustScores,
+                                        float quarantineThreshold) const {
+    std::vector<int> path;
+    if (startNode < 0 || startNode >= numNodes || endNode < 0 || endNode >= numNodes) {
+        return path;
+    }
+
+    const double inf = std::numeric_limits<double>::infinity();
+    std::vector<double> dist(numNodes, inf);
+    std::vector<int> parent(numNodes, -1);
+    using QueueEntry = std::pair<double, int>;
+    std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> pq;
+
+    dist[startNode] = 0.0;
+    pq.push({0.0, startNode});
+
+    while (!pq.empty()) {
+        auto [currentDist, u] = pq.top();
+        pq.pop();
+
+        if (currentDist > dist[u]) {
+            continue;
+        }
+
+        if (u == endNode) {
+            break;
+        }
+
+        auto it = adjList.find(u);
+        if (it == adjList.end()) {
+            continue;
+        }
+
+        for (int v : it->second) {
+            if (v != endNode && v != startNode &&
+                v < static_cast<int>(trustScores.size()) &&
+                trustScores[v] < quarantineThreshold) {
+                continue;
+            }
+
+            double trust = 1.0;
+            if (v < static_cast<int>(trustScores.size())) {
+                trust = std::max(0.05, static_cast<double>(trustScores[v]));
+            }
+
+            const double edgeWeight = 1.0 / trust;
+            const double nextDist = currentDist + edgeWeight;
+
+            if (nextDist < dist[v]) {
+                dist[v] = nextDist;
+                parent[v] = u;
+                pq.push({nextDist, v});
+            }
+        }
+    }
+
+    if (!std::isfinite(dist[endNode])) {
+        return path;
+    }
+
+    for (int current = endNode; current != -1; current = parent[current]) {
+        path.push_back(current);
+    }
+    std::reverse(path.begin(), path.end());
+
+    return path;
 }
