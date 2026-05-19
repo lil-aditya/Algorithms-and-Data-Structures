@@ -54,6 +54,26 @@ private:
     ChaosMode chaosMode;
     mutable std::mutex chaosMutex;
     int lastObservedLeaderID;
+    mutable std::mutex controlMutex;
+    int currentLeaderID;
+    int64_t leaderEpoch;
+    int64_t lastLeaderHeartbeatMs;
+    bool electionInProgress;
+    int64_t electionStartedAtMs;
+    int64_t controlGeneration;
+    std::vector<float> authoritativeTrustScores;
+    std::vector<std::vector<float>> latestTrustMatrix;
+    std::vector<int64_t> reportReceivedAtMs;
+    int trustVersion;
+    int64_t lastTrustSyncMs;
+    std::vector<int64_t> lastPeerSuccessMs;
+    int nextProbeTargetID;
+    int probeSequence;
+    int64_t nextProbeAtMs;
+    int64_t nextHeartbeatAtMs;
+    int64_t nextTrustReportAtMs;
+    int64_t nextTrustSyncAtMs;
+    int64_t nextRecoveryAtMs;
 
     std::thread serverThread;
     std::thread workerThread;
@@ -65,8 +85,6 @@ private:
 
     static std::map<int, Node*> registry;
     static std::mutex registryMutex;
-    static int leaderNodeID;
-    static std::mutex leaderMutex;
 
     void runServer();
     void runWorker();
@@ -77,20 +95,41 @@ private:
     void adjustTrust(int subjectNode, float delta, const std::string& reason);
     void setTrustScore(int subjectNode, float value, const std::string& reason);
     std::vector<float> getLocalTrustSnapshot() const;
-    std::vector<float> getBroadcastTrustVector() const;
-    float getAggregatedTrustForNode(int subjectNode) const;
+    std::vector<float> getRoutingTrustVector() const;
+    std::vector<std::vector<float>> getLatestTrustMatrix() const;
     bool isLeadershipEligible() const;
-    void refreshLeader(const std::string& reason);
     ChaosMode getChaosMode() const;
     void setChaosMode(ChaosMode mode);
     void resetRuntimeState(bool clearPacketHistory);
     json buildNetworkSnapshot() const;
     bool isProbePacket(const DataPacket& packet) const;
     void applyChaosToPacket(DataPacket& packet);
+    void startElection(const std::string& reason, int64_t minimumEpoch = 0);
+    void announceCoordinator(const std::string& reason);
+    void acceptCoordinator(int leaderID, int64_t epoch,
+                           const std::vector<float>& trustScores,
+                           const std::vector<std::vector<float>>& trustMatrix,
+                           int incomingTrustVersion,
+                           const std::string& reason);
+    void broadcastLeaderHeartbeat();
+    void submitTrustReport();
+    void recomputeAuthoritativeTrust(const std::string& reason);
+    void broadcastTrustSync(const std::string& reason);
+    void dispatchAutonomousProbe();
+    void recordPeerSuccess(int subjectNode);
+    void applyTrustRecoveryTick();
+    bool isCurrentLeader() const;
+    int getCurrentLeaderID() const;
+    int64_t getLeaderEpoch() const;
+    int64_t getLastLeaderHeartbeatMs() const;
+    uint64_t signControlPayload(const std::string& payload) const;
+    bool verifyControlPayload(int senderNode, const std::string& payload, uint64_t signature) const;
+    bool postJsonToNode(int targetNodeID, const std::string& path, const json& payload,
+                        json* response = nullptr, int timeoutMs = 1200) const;
 
-    static int computeLeaderCandidate();
     static std::string chaosModeToString(ChaosMode mode);
     static bool parseChaosMode(const std::string& raw, ChaosMode& mode);
     static int64_t nowMs();
     static std::string formatPath(const std::vector<int>& path);
+    static std::string serializeTrustScores(const std::vector<float>& scores);
 };
