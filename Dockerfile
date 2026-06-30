@@ -26,9 +26,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY --from=builder /app/build/dsa_project ./dsa_project
-COPY --from=builder /app/data ./data
 
-RUN mkdir -p demo_results logs
+RUN mkdir -p demo_results logs data
 
 EXPOSE 8080
 
