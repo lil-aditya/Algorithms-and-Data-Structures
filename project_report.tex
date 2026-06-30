@@ -1,0 +1,159 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+
+\geometry{a4paper, margin=1in}
+\linespread{1.15}
+
+\title{
+    \vspace{2cm}
+    \textbf{\huge Project Report: ADIPE} \\
+    \vspace{0.5cm}
+    \Large Algorithmic Data Integrity and Prioritization Engine
+    \vspace{2cm}
+}
+\author{Development Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+ADIPE (Algorithmic Data Integrity and Prioritization Engine) is a robust, 6-node distributed systems simulation designed to test, visualize, and demonstrate various networking and security concepts. Built natively in C++17 for the high-performance backend and utilizing React (via Vite) for a modern, responsive frontend dashboard, ADIPE acts as a secure, priority-aware packet router. 
+
+Over its development lifecycle, it has evolved significantly. What began as a simple router now includes a Byzantine-style control plane featuring trust scoring, chaos injection, autonomous probes, adaptive routing, and bully-style leader election over genuine HTTP control messages. This provides an excellent simulation platform to study consensus mechanisms, network degradation, and malicious node behavior in a localized environment.
+
+\section{System Architecture}
+
+\subsection{Node Architecture}
+The core engine instantiates 6 unique nodes, each running its own isolated HTTP server on sequential ports (from 8080 to 8085). Each node in the ADIPE ecosystem is an autonomous entity maintaining:
+\begin{itemize}
+    \item \textbf{Inbox Priority Queue:} Manages incoming packet traffic prioritizing based on assigned urgency levels.
+    \item \textbf{Worker Thread:} A dedicated processing unit per node to handle packet logic and forwarding.
+    \item \textbf{Monitor Thread:} Specifically tasked with managing control-plane operations, such as handling elections and trust reports.
+    \item \textbf{RSA Identity:} A unique cryptographic identity for signing packets, ensuring origin non-repudiation.
+    \item \textbf{Trust Vector:} A local $1 \times 6$ array representing the health, reliability, and trustworthiness of all nodes within the cluster.
+\end{itemize}
+
+\subsection{Network Topology}
+The simulated network is structured to create two distinct parallel routes from an ingress point (Node 0) to an egress point (Node 5). This design enforces the necessity for intelligent routing decisions and fault-tolerance mechanisms.
+
+\begin{verbatim}
+Node 0 (:8080) --- Node 1 (:8081) --- Node 3 (:8083) --- Node 5 (:8085)
+    |                                                          |
+Node 2 (:8082) --- Node 4 (:8084) --------------------------+
+\end{verbatim}
+
+The parallel paths (Path A: \texttt{0 -> 1 -> 3 -> 5} and Path B: \texttt{0 -> 2 -> 4 -> 5}) ensure that if an intermediate node becomes malicious or unresponsive, the network can dynamically reroute traffic through the alternate path.
+
+\section{Core Features and Mechanisms}
+
+\subsection{Trust Management and Chaos Injection}
+ADIPE implements a sophisticated trust management system. Each node persistently tracks the behavior of its peers. Trust values degrade automatically under anomalous conditions:
+\begin{itemize}
+    \item Forged sender identities.
+    \item Cryptographic signature mismatches.
+    \item Connection timeouts or high-latency responses.
+\end{itemize}
+Conversely, trust naturally regenerates through continuous, healthy traffic, mirroring real-world reputation systems.
+
+To simulate Byzantine failures and network faults, ADIPE exposes several chaos modes via a dedicated API (\texttt{POST /chaos}):
+\begin{itemize}
+    \item \textbf{NORMAL:} Standard, honest node operation.
+    \item \textbf{TAMPER:} Maliciously alters packet payloads mid-transit.
+    \item \textbf{SILENT\_DROP:} Acts as a black hole, discarding packets without acknowledging the failure.
+    \item \textbf{DELAY:} Introduces severe artificial latency to simulate network congestion.
+    \item \textbf{FORGE:} Attempts to inject packets with spoofed identities.
+    \item \textbf{EAVESDROP:} Covertly monitors and logs traffic without altering the flow.
+\end{itemize}
+
+\subsection{Adaptive Trust-Aware Routing}
+Standard Breadth-First Search (BFS) is insufficient in an adversarial network. ADIPE's routing relies on a trust-aware implementation of Dijkstra's algorithm. Edge weights in the routing graph are inversely proportional to trust. Furthermore, nodes whose trust score falls below a strict quarantine threshold are actively excluded from the routing graph, ensuring packets navigate safely around unreliable or compromised nodes.
+
+\subsection{Distributed Control Plane and Leader Election}
+The cluster is governed by a resilient control plane:
+\begin{itemize}
+    \item \textbf{Leader Election:} A bully-style election algorithm operates via explicit HTTP messages (\texttt{election}, \texttt{coordinator}, \texttt{leader-heartbeat}).
+    \item \textbf{Trust Reconciliation:} The elected leader aggregates signed trust reports from followers. It resolves discrepancies using a weighted strategy to prevent malicious nodes from unfairly down-voting honest peers, broadcasting authoritative trust snapshots back to the cluster.
+    \item \textbf{Epochs/Generations:} Control-plane generations prevent stale election traffic from poisoning current network states after a cluster reset.
+\end{itemize}
+
+\subsection{Autonomous Network Probes}
+Nodes independently inject signed probe packets. These probes act as background network diagnostics. They reward successful deliveries (boosting trust) and aggressively expose and penalize high-latency or degraded network hops, allowing the routing tables to adapt even during periods of low user traffic.
+
+\section{Application Programming Interface (API)}
+
+ADIPE exposes a comprehensive set of RESTful APIs to interact with the cluster.
+
+\subsection{User-Facing Packet APIs}
+\begin{table}[h]
+    \centering
+    \begin{tabularx}{\textwidth}{l l X}
+        \toprule
+        \textbf{Method} & \textbf{Endpoint} & \textbf{Description} \\
+        \midrule
+        \texttt{POST} & \texttt{/inject} & Inject a new packet into the network \\
+        \texttt{POST} & \texttt{/packet} & Internal hop forwarding endpoint \\
+        \texttt{GET}  & \texttt{/status?id=...} & Track the lifecycle for a specific packet \\
+        \texttt{GET}  & \texttt{/packets} & Retrieve all tracked packets \\
+        \texttt{GET}  & \texttt{/log} & Access the shared cluster log \\
+        \texttt{GET}  & \texttt{/check} & Assess node health and chaos mode \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Control and Simulation APIs}
+\begin{table}[h]
+    \centering
+    \begin{tabularx}{\textwidth}{l l X}
+        \toprule
+        \textbf{Method} & \textbf{Endpoint} & \textbf{Description} \\
+        \midrule
+        \texttt{GET}  & \texttt{/network} & Node states, leader view, trust matrix, quarantines \\
+        \texttt{GET}  & \texttt{/leader} & Leader ID, leader port, election epoch \\
+        \texttt{POST} & \texttt{/chaos?mode=...} & Flip a node into a rogue or chaotic state \\
+        \texttt{POST} & \texttt{/reset} & Reset trust, chaos state, and control plane \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\section{Development, Testing, and Tooling}
+
+\subsection{Technology Stack}
+\begin{itemize}
+    \item \textbf{Backend Engine:} Written in C++17 utilizing \texttt{httplib.h} for networking, \texttt{json.hpp} for serialization, and SQLite for data persistence. Organized across specialized modules including Priority Engine, Graph Routing, and RSA Signatures. Built via CMake.
+    \item \textbf{Frontend Dashboard:} React.js powered by Vite. Provides real-time polling to visualize the leader, chaos modes, trust matrices, and packet lifecycles.
+\end{itemize}
+
+\subsection{Regression Testing}
+To guarantee system stability as new features are introduced, a JavaScript-based regression suite (\texttt{phase6\_regression.js}) is integrated. This suite systematically validates:
+\begin{itemize}
+    \item Leader failover mechanics when a rogue leader is artificially introduced.
+    \item The correctness of trust-aware rerouting away from a delayed or black-holing node.
+    \item Detection of forged senders and subsequent trust punishment.
+    \item The operational health of background autonomous probe traffic.
+\end{itemize}
+
+\section{Conclusion and Future Work}
+ADIPE stands as a comprehensive educational and experimental platform for distributed systems engineering. It successfully simulates complex network behaviors, Byzantine faults, and consensus mechanisms in an observable, locally hosted environment. 
+
+Future development will focus on the following enhancements:
+\begin{itemize}
+    \item Adding explicit negative acknowledgements (NACKs) for dropped probes to accelerate fault detection.
+    \item Enhancing the persistence layer to include full control-plane history.
+    \item Upgrading the cryptographic primitives from educational RSA implementations to production-grade security standards.
+    \item Developing a replayable demo script for educational walkthroughs and interview demonstrations.
+\end{itemize}
+
+\end{document}
